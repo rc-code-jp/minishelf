@@ -34,16 +34,19 @@ fn main() -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
+    let _cleanup = TerminalCleanup;
+
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
     let run_result = run(&mut terminal, startup_root);
+    let cursor_result = terminal.show_cursor();
 
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
-
-    run_result
+    match (run_result, cursor_result) {
+        (Err(err), _) => Err(err),
+        (Ok(_), Err(err)) => Err(err.into()),
+        (Ok(_), Ok(_)) => Ok(()),
+    }
 }
 
 fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, startup_root: PathBuf) -> Result<()> {
@@ -51,6 +54,7 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, startup_root: Path
     let mut last_tick = Instant::now();
 
     while !app.should_quit {
+        app.poll_background_tasks();
         terminal.draw(|f| ui::render(f, &app))?;
 
         let timeout = REFRESH_INTERVAL.saturating_sub(last_tick.elapsed());
@@ -83,4 +87,14 @@ fn resolve_startup_root(path: Option<PathBuf>) -> Result<PathBuf> {
     }
 
     Ok(canonical)
+}
+
+struct TerminalCleanup;
+
+impl Drop for TerminalCleanup {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+        let mut stdout = io::stdout();
+        let _ = execute!(stdout, LeaveAlternateScreen);
+    }
 }

@@ -27,32 +27,39 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
 }
 
 fn render_tree(frame: &mut Frame<'_>, app: &App, area: Rect) {
-    let mut lines = Vec::new();
-    for visible in app.tree.visible_items() {
-        let node = visible.node;
-        let indent = "  ".repeat(visible.depth);
-        let marker = if node.is_dir {
-            if node.expanded {
-                "v "
-            } else {
-                "> "
-            }
+    let viewport_height = area.height.saturating_sub(2) as usize;
+    let selected_index = app.tree.selected_index();
+    let scroll_offset = if viewport_height == 0 || selected_index < viewport_height {
+        0
+    } else {
+        selected_index - viewport_height + 1
+    };
+
+    let end_index = app
+        .tree
+        .entries
+        .len()
+        .min(scroll_offset.saturating_add(viewport_height.max(1)));
+
+    let mut lines = Vec::with_capacity(end_index.saturating_sub(scroll_offset));
+    for (absolute_index, node) in app.tree.entries[scroll_offset..end_index].iter().enumerate() {
+        let absolute_index = scroll_offset + absolute_index;
+        let label = if node.is_dir {
+            format!("{}/", node.name)
         } else {
-            "  "
+            node.name.clone()
         };
 
         let mut style = style_for_git(app.selected_git_state(&node.path, node.is_dir));
-        if visible.is_selected {
+        if absolute_index == selected_index {
             style = style.add_modifier(Modifier::REVERSED | Modifier::BOLD);
         }
 
-        lines.push(Line::from(Span::styled(
-            format!("{indent}{marker}{}", node.name),
-            style,
-        )));
+        lines.push(Line::from(Span::styled(label, style)));
     }
 
-    let tree = Paragraph::new(lines).block(Block::default().title("Tree").borders(Borders::ALL));
+    let title = format!("Dir: {}", app.tree.current_dir.display());
+    let tree = Paragraph::new(lines).block(Block::default().title(title).borders(Borders::ALL));
     frame.render_widget(tree, area);
 }
 

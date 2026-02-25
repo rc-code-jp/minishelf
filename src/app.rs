@@ -1,4 +1,6 @@
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use arboard::Clipboard;
@@ -9,6 +11,7 @@ use crate::tree::Tree;
 
 pub const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 pub const TREE_RATIO_PERCENT: u16 = 20;
+const COPY_STATUS_DURATION: Duration = Duration::from_secs(3);
 
 pub struct App {
     pub startup_root: PathBuf,
@@ -19,6 +22,11 @@ pub struct App {
     pub last_git_refresh: Instant,
     pub should_quit: bool,
     clipboard: Option<Clipboard>,
+    status_expires_at: Option<Instant>,
+    git_refresh_tx: Sender<GitSnapshot>,
+    git_refresh_rx: Receiver<GitSnapshot>,
+    git_refresh_in_flight: bool,
+    pending_manual_refresh: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -36,11 +44,11 @@ pub enum Command {
 
 impl App {
     pub fn new(startup_root: PathBuf) -> anyhow::Result<Self> {
-        let mut tree = Tree::new(startup_root.clone())?;
-        tree.expand_selected()?;
+        let tree = Tree::new(startup_root.clone())?;
 
         let git = GitSnapshot::collect(&startup_root);
         let preview = PreviewState::from_path(tree.selected_path(), MAX_PREVIEW_BYTES);
+        let (git_refresh_tx, git_refresh_rx) = mpsc::channel();
 
         Ok(Self {
             startup_root,
@@ -51,10 +59,16 @@ impl App {
             last_git_refresh: Instant::now(),
             should_quit: false,
             clipboard: Clipboard::new().ok(),
+            status_expires_at: None,
+            git_refresh_tx,
+            git_refresh_rx,
+            git_refresh_in_flight: false,
+            pending_manual_refresh: false,
         })
     }
 
     pub fn handle_command(&mut self, command: Command) {
+        self.poll_background_tasks();
         match command {
             Command::MoveUp => {
                 self.tree.move_up();
@@ -76,22 +90,66 @@ impl App {
             }
             Command::PreviewUp => self.preview.scroll_up(1),
             Command::PreviewDown => self.preview.scroll_down(1),
-            Command::RefreshGit => self.refresh_git(true),
+            Command::RefreshGit => self.request_git_refresh(true),
             Command::CopyRelativePath => self.copy_relative_path(),
             Command::Quit => self.should_quit = true,
         }
     }
 
     pub fn periodic_refresh(&mut self) {
-        self.refresh_git(false);
+        self.request_git_refresh(false);
+        self.poll_background_tasks();
     }
 
-    fn refresh_git(&mut self, manual: bool) {
-        self.git = GitSnapshot::collect(&self.startup_root);
-        self.last_git_refresh = Instant::now();
-        if manual {
-            self.status_message = String::from("git refreshed");
+    pub fn poll_background_tasks(&mut self) {
+        if let Some(expires_at) = self.status_expires_at {
+            if Instant::now() >= expires_at {
+                self.status_message = String::from("ready");
+                self.status_expires_at = None;
+            }
         }
+
+        loop {
+            match self.git_refresh_rx.try_recv() {
+                Ok(snapshot) => {
+                    self.git = snapshot;
+                    self.last_git_refresh = Instant::now();
+                    self.git_refresh_in_flight = false;
+
+                    if self.pending_manual_refresh {
+                        self.status_message = String::from("git refreshed");
+                        self.status_expires_at = None;
+                        self.pending_manual_refresh = false;
+                    }
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    self.git_refresh_in_flight = false;
+                    break;
+                }
+            }
+        }
+    }
+
+    fn request_git_refresh(&mut self, manual: bool) {
+        if manual {
+            self.pending_manual_refresh = true;
+            self.status_message = String::from("git refreshing...");
+            self.status_expires_at = None;
+        }
+
+        if self.git_refresh_in_flight {
+            return;
+        }
+
+        self.git_refresh_in_flight = true;
+        let tx = self.git_refresh_tx.clone();
+        let root = self.startup_root.clone();
+
+        thread::spawn(move || {
+            let snapshot = GitSnapshot::collect(&root);
+            let _ = tx.send(snapshot);
+        });
     }
 
     fn sync_preview(&mut self) {
@@ -104,14 +162,14 @@ impl App {
             Ok(text) => {
                 if let Some(clipboard) = self.clipboard.as_mut() {
                     match clipboard.set_text(text.clone()) {
-                        Ok(()) => self.status_message = format!("copied: {text}"),
-                        Err(err) => self.status_message = format!("copy failed: {err}"),
+                        Ok(()) => self.set_temporary_status(format!("copied: {text}")),
+                        Err(err) => self.set_temporary_status(format!("copy failed: {err}")),
                     }
                 } else {
-                    self.status_message = String::from("clipboard unavailable");
+                    self.set_temporary_status("clipboard unavailable");
                 }
             }
-            Err(err) => self.status_message = format!("copy failed: {err}"),
+            Err(err) => self.set_temporary_status(format!("copy failed: {err}")),
         }
     }
 
@@ -124,6 +182,11 @@ impl App {
             PreviewKind::Text => "Preview",
             PreviewKind::Message => "Preview (message)",
         }
+    }
+
+    fn set_temporary_status(&mut self, msg: impl Into<String>) {
+        self.status_message = msg.into();
+        self.status_expires_at = Some(Instant::now() + COPY_STATUS_DURATION);
     }
 }
 
