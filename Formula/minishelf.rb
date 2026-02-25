@@ -1,16 +1,16 @@
 class Minishelf < Formula
   desc "Rust TUI file explorer with git-aware coloring"
   homepage "https://github.com/rc-code-jp/minishelf"
-  version "0.1.3"
+  version "0.1.4"
 
   on_macos do
     url "https://github.com/rc-code-jp/minishelf/releases/download/v#{version}/minishelf-#{version}-macos-aarch64.tar.gz"
-    sha256 "c948cc07ec8fbb07c1d260ac8cc6ed16573b99564582f5518a708fccb0b17d43"
+    sha256 "4cd51291a6f6d4a8ef88e4dd68688994422517f4addb786134da64d0664e04e5"
   end
 
   on_linux do
     url "https://github.com/rc-code-jp/minishelf/releases/download/v#{version}/minishelf-#{version}-linux-x86_64.tar.gz"
-    sha256 "64015697d066f27db16d1aa159ceb8646d4e91700690cf20f0e7999f377013bd"
+    sha256 "4cd51291a6f6d4a8ef88e4dd68688994422517f4addb786134da64d0664e04e5"
   end
 
   def install
