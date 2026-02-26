@@ -66,15 +66,26 @@ impl GitSnapshot {
 
     pub fn state_for(&self, path: &Path, is_dir: bool) -> GitState {
         if is_dir {
-            self.dir_states.get(path).copied().unwrap_or(GitState::Clean)
+            self.dir_states
+                .get(path)
+                .copied()
+                .unwrap_or(GitState::Clean)
         } else {
-            self.file_states.get(path).copied().unwrap_or(GitState::Clean)
+            self.file_states
+                .get(path)
+                .copied()
+                .unwrap_or(GitState::Clean)
         }
     }
 
     fn insert_file_state(&mut self, path: PathBuf, state: GitState, startup_root: &Path) {
-        let existing = self.file_states.get(&path).copied().unwrap_or(GitState::Clean);
-        self.file_states.insert(path.clone(), combine_state(existing, state));
+        let existing = self
+            .file_states
+            .get(&path)
+            .copied()
+            .unwrap_or(GitState::Clean);
+        self.file_states
+            .insert(path.clone(), combine_state(existing, state));
 
         let mut cursor = path.parent();
         while let Some(parent) = cursor {
@@ -148,8 +159,17 @@ mod tests {
 
     #[test]
     fn combine_prefers_stronger_state() {
-        assert_eq!(combine_state(GitState::Untracked, GitState::Modified), GitState::Modified);
-        assert_eq!(combine_state(GitState::Added, GitState::Deleted), GitState::Deleted);
-        assert_eq!(combine_state(GitState::Deleted, GitState::Added), GitState::Deleted);
+        assert_eq!(
+            combine_state(GitState::Untracked, GitState::Modified),
+            GitState::Modified
+        );
+        assert_eq!(
+            combine_state(GitState::Added, GitState::Deleted),
+            GitState::Deleted
+        );
+        assert_eq!(
+            combine_state(GitState::Deleted, GitState::Added),
+            GitState::Deleted
+        );
     }
 }

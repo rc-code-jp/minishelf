@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use arboard::Clipboard;
 
 use crate::git_status::{GitSnapshot, GitState};
-use crate::preview::{PreviewKind, PreviewState};
+use crate::preview::{PreviewKind, PreviewRenderMode, PreviewState};
 use crate::tree::Tree;
 
 pub const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
@@ -34,6 +34,7 @@ pub struct App {
     git_refresh_rx: Receiver<GitSnapshot>,
     git_refresh_in_flight: bool,
     pending_manual_refresh: bool,
+    preferred_preview_mode: Option<PreviewRenderMode>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -45,6 +46,7 @@ pub enum Command {
     PreviewUp,
     PreviewDown,
     RefreshGit,
+    TogglePreviewMode,
     CopyRelativePath,
     Quit,
 }
@@ -54,7 +56,7 @@ impl App {
         let tree = Tree::new(startup_root.clone())?;
 
         let git = GitSnapshot::collect(&startup_root);
-        let preview = PreviewState::from_path(&startup_root, tree.selected_path());
+        let preview = PreviewState::from_path(&startup_root, tree.selected_path(), None);
         let (git_refresh_tx, git_refresh_rx) = mpsc::channel();
 
         Ok(Self {
@@ -72,6 +74,7 @@ impl App {
             git_refresh_rx,
             git_refresh_in_flight: false,
             pending_manual_refresh: false,
+            preferred_preview_mode: None,
         })
     }
 
@@ -116,6 +119,7 @@ impl App {
             Command::PreviewUp => self.preview.scroll_up(1),
             Command::PreviewDown => self.preview.scroll_down(1),
             Command::RefreshGit => self.request_git_refresh(true),
+            Command::TogglePreviewMode => self.toggle_preview_mode(),
             Command::CopyRelativePath => self.copy_relative_path(),
             Command::Quit => self.should_quit = true,
         }
@@ -178,7 +182,22 @@ impl App {
     }
 
     fn sync_preview(&mut self) {
-        self.preview = PreviewState::from_path(&self.startup_root, self.tree.selected_path());
+        self.preview = PreviewState::from_path(
+            &self.startup_root,
+            self.tree.selected_path(),
+            self.preferred_preview_mode,
+        );
+    }
+
+    fn toggle_preview_mode(&mut self) {
+        let Some(next_mode) = self.preview.next_render_mode() else {
+            self.set_temporary_status("preview mode unchanged");
+            return;
+        };
+
+        self.preferred_preview_mode = Some(next_mode);
+        self.sync_preview();
+        self.set_temporary_status(format!("preview mode: {}", self.preview.mode_label()));
     }
 
     fn copy_relative_path(&mut self) {
@@ -202,16 +221,10 @@ impl App {
         self.git.state_for(path, is_dir)
     }
 
-    pub fn preview_title(&self) -> &'static str {
+    pub fn preview_title(&self) -> String {
         match self.preview.kind {
-            PreviewKind::Text => {
-                if self.preview.is_diff_view() {
-                    "Preview (diff)"
-                } else {
-                    "Preview (file)"
-                }
-            }
-            PreviewKind::Message => "Preview (message)",
+            PreviewKind::Text => format!("Preview ({})", self.preview.mode_label()),
+            PreviewKind::Message => String::from("Preview (message)"),
         }
     }
 
@@ -250,9 +263,16 @@ fn normalize_to_slashes(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::Path;
 
+    use git2::{IndexAddOption, Repository, Signature};
+    use tempfile::tempdir;
+
+    use crate::preview::PreviewRenderMode;
+
     use super::format_relative_with_at;
+    use super::{App, Command};
 
     #[test]
     fn format_relative_file() {
@@ -274,5 +294,71 @@ mod tests {
         let root = Path::new("/repo");
         let outside = Path::new("/other/file.txt");
         assert!(format_relative_with_at(root, outside).is_err());
+    }
+
+    #[test]
+    fn toggle_preview_mode_cycles_markdown_raw_diff() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        let repo = Repository::init(tmp.path()).expect("git init should succeed");
+        let md = tmp.path().join("README.md");
+        fs::write(&md, "# Title\n").expect("write should succeed");
+        commit_all(&repo, "initial");
+        fs::write(&md, "# Title\n\nupdated\n").expect("write should succeed");
+
+        let mut app = App::new(tmp.path().to_path_buf()).expect("app should build");
+        select_by_file_name(&mut app, "README.md");
+        assert_eq!(app.preview.render_mode, PreviewRenderMode::Markdown);
+
+        app.handle_command(Command::TogglePreviewMode);
+        assert_eq!(app.preview.render_mode, PreviewRenderMode::Raw);
+
+        app.handle_command(Command::TogglePreviewMode);
+        assert_eq!(app.preview.render_mode, PreviewRenderMode::Diff);
+
+        app.handle_command(Command::TogglePreviewMode);
+        assert_eq!(app.preview.render_mode, PreviewRenderMode::Markdown);
+    }
+
+    fn select_by_file_name(app: &mut App, file_name: &str) {
+        for _ in 0..app.tree.entries.len() {
+            if app
+                .tree
+                .selected_path()
+                .file_name()
+                .and_then(|name| name.to_str())
+                == Some(file_name)
+            {
+                return;
+            }
+            app.handle_command(Command::MoveDown);
+        }
+
+        panic!("file should exist in tree: {file_name}");
+    }
+
+    fn commit_all(repo: &Repository, message: &str) {
+        let mut index = repo.index().expect("index should open");
+        index
+            .add_all([Path::new(".")], IndexAddOption::DEFAULT, None)
+            .expect("add_all should succeed");
+        index.write().expect("index write should succeed");
+
+        let tree_id = index.write_tree().expect("write_tree should succeed");
+        let tree = repo.find_tree(tree_id).expect("tree should exist");
+
+        let sig = Signature::now("test", "test@example.com").expect("signature should build");
+        let parent_commit = repo
+            .head()
+            .ok()
+            .and_then(|h| h.target())
+            .and_then(|oid| repo.find_commit(oid).ok());
+
+        if let Some(parent) = parent_commit.as_ref() {
+            repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[parent])
+                .expect("commit should succeed");
+        } else {
+            repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[])
+                .expect("commit should succeed");
+        }
     }
 }

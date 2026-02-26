@@ -6,6 +6,7 @@ use ratatui::Frame;
 
 use crate::app::{App, TREE_RATIO_PERCENT};
 use crate::git_status::GitState;
+use crate::preview::PreviewRenderMode;
 
 pub fn render(frame: &mut Frame<'_>, app: &App) {
     let outer = Layout::default()
@@ -42,7 +43,10 @@ fn render_tree(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .min(scroll_offset.saturating_add(viewport_height.max(1)));
 
     let mut lines = Vec::with_capacity(end_index.saturating_sub(scroll_offset));
-    for (absolute_index, node) in app.tree.entries[scroll_offset..end_index].iter().enumerate() {
+    for (absolute_index, node) in app.tree.entries[scroll_offset..end_index]
+        .iter()
+        .enumerate()
+    {
         let absolute_index = scroll_offset + absolute_index;
         let label = if node.is_dir {
             format!("{}/", node.name)
@@ -71,29 +75,33 @@ fn render_tree(frame: &mut Frame<'_>, app: &App, area: Rect) {
 fn render_preview(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let height = area.height.saturating_sub(2) as usize;
     let inner_width = area.width.saturating_sub(2) as usize;
-    let start = app.preview.scroll.min(app.preview.lines.len().saturating_sub(1));
+    let start = app
+        .preview
+        .scroll
+        .min(app.preview.lines.len().saturating_sub(1));
     let end = (start + height).min(app.preview.lines.len());
 
-    let mut lines: Vec<Line<'_>> = app.preview.lines[start..end]
-        .iter()
-        .map(|line| {
-            let style = if app.preview.is_diff_view() {
-                style_for_diff_line(line)
-            } else {
-                Style::default()
-            };
-            let sanitized = line.replace('\t', "    ");
-            let padded = format!("{:<width$}", sanitized, width = inner_width);
-            Line::from(Span::styled(padded, style))
-        })
-        .collect();
+    let mut in_markdown_code = false;
+    let mut lines: Vec<Line<'_>> = Vec::with_capacity(end.saturating_sub(start));
+    for line in &app.preview.lines[start..end] {
+        let style = match app.preview.render_mode {
+            PreviewRenderMode::Diff => style_for_diff_line(line),
+            PreviewRenderMode::Markdown => style_for_markdown_line(line, &mut in_markdown_code),
+            PreviewRenderMode::Raw => Style::default(),
+        };
+        let sanitized = line.replace('\t', "    ");
+        let padded = format!("{:<width$}", sanitized, width = inner_width);
+        lines.push(Line::from(Span::styled(padded, style)));
+    }
 
     let blank = " ".repeat(inner_width);
     while lines.len() < height {
         lines.push(Line::from(Span::raw(blank.clone())));
     }
 
-    let mut block = Block::default().title(app.preview_title()).borders(Borders::ALL);
+    let mut block = Block::default()
+        .title(app.preview_title())
+        .borders(Borders::ALL);
     if app.is_preview_focused() {
         block = block.border_style(Style::default().fg(Color::Cyan));
     }
@@ -104,10 +112,14 @@ fn render_preview(frame: &mut Frame<'_>, app: &App, area: Rect) {
 
 fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let status = format!(
-        "{} | selected: {} | focus: {} | keys: j/k h/l enter/esc arrows r y q",
+        "{} | selected: {} | focus: {} | keys: j/k h/l enter/esc arrows r v y q",
         app.status_message,
         app.tree.selected_path().display(),
-        if app.is_tree_focused() { "tree" } else { "preview" }
+        if app.is_tree_focused() {
+            "tree"
+        } else {
+            "preview"
+        }
     );
 
     let line = Line::from(Span::styled(status, Style::default().fg(Color::DarkGray)));
@@ -128,6 +140,65 @@ fn style_for_diff_line(line: &str) -> Style {
     }
 
     Style::default()
+}
+
+fn style_for_markdown_line(line: &str, in_code_block: &mut bool) -> Style {
+    let trimmed = line.trim_start();
+
+    if trimmed.starts_with("```") {
+        *in_code_block = !*in_code_block;
+        return Style::default()
+            .fg(Color::Magenta)
+            .add_modifier(Modifier::BOLD);
+    }
+
+    if *in_code_block {
+        return Style::default()
+            .fg(Color::Yellow)
+            .bg(Color::Rgb(30, 30, 30));
+    }
+
+    if trimmed.starts_with("# ") {
+        return Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD);
+    }
+
+    if trimmed.starts_with("## ") {
+        return Style::default()
+            .fg(Color::LightCyan)
+            .add_modifier(Modifier::BOLD);
+    }
+
+    if trimmed.starts_with("### ") {
+        return Style::default()
+            .fg(Color::LightBlue)
+            .add_modifier(Modifier::BOLD);
+    }
+
+    if trimmed.starts_with(">") {
+        return Style::default()
+            .fg(Color::Gray)
+            .add_modifier(Modifier::ITALIC);
+    }
+
+    if is_markdown_list_item(trimmed) {
+        return Style::default().fg(Color::Green);
+    }
+
+    Style::default()
+}
+
+fn is_markdown_list_item(line: &str) -> bool {
+    if line.starts_with("- ") || line.starts_with("* ") || line.starts_with("+ ") {
+        return true;
+    }
+
+    let Some((prefix, rest)) = line.split_once('.') else {
+        return false;
+    };
+
+    !prefix.is_empty() && prefix.chars().all(|c| c.is_ascii_digit()) && rest.starts_with(' ')
 }
 
 fn style_for_git(state: GitState) -> Style {
