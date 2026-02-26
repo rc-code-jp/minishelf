@@ -24,7 +24,10 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
 
     render_tree(frame, app, body[0]);
     render_preview(frame, app, body[1]);
-    render_status(frame, app, outer[1]);
+    render_status(frame, outer[1]);
+    if app.show_help {
+        render_help(frame, frame.area());
+    }
 }
 
 fn render_tree(frame: &mut Frame<'_>, app: &App, area: Rect) {
@@ -118,19 +121,11 @@ fn render_preview(frame: &mut Frame<'_>, app: &App, area: Rect) {
     frame.render_widget(preview, area);
 }
 
-fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
-    let status = format!(
-        "{} | selected: {} | focus: {} | keys: j/k h/l enter/esc arrows r v n/N y q",
-        app.status_message,
-        app.tree.selected_path().display(),
-        if app.is_tree_focused() {
-            "tree"
-        } else {
-            "preview"
-        }
-    );
-
-    let line = Line::from(Span::styled(status, Style::default().fg(Color::DarkGray)));
+fn render_status(frame: &mut Frame<'_>, area: Rect) {
+    let line = Line::from(Span::styled(
+        "?: help",
+        Style::default().fg(Color::DarkGray),
+    ));
     frame.render_widget(Paragraph::new(line), area);
 }
 
@@ -153,4 +148,57 @@ fn style_for_git(state: GitState) -> Style {
         GitState::Modified => Style::default().fg(Color::Yellow),
         GitState::Deleted => Style::default().fg(Color::Red),
     }
+}
+
+fn render_help(frame: &mut Frame<'_>, area: Rect) {
+    let popup = centered_rect(76, 80, area);
+    let help_lines = vec![
+        Line::from("Navigation"),
+        Line::from("  j / k, Down / Up      Move selection or preview scroll"),
+        Line::from("  h / Left / Esc         Collapse dir or move focus back to tree"),
+        Line::from("  l / Right / Enter      Expand dir or open file preview"),
+        Line::from(""),
+        Line::from("Preview"),
+        Line::from("  Ctrl+u / PageUp        Scroll preview up"),
+        Line::from("  Ctrl+d / PageDown      Scroll preview down"),
+        Line::from("  v                      Toggle preview mode (raw <-> diff)"),
+        Line::from("  n / N                  Jump to next / previous change in diff mode"),
+        Line::from(""),
+        Line::from("General"),
+        Line::from("  r                      Refresh git status"),
+        Line::from("  y                      Copy @-relative path"),
+        Line::from("  q                      Quit"),
+        Line::from("  ? / F1                 Toggle this help"),
+        Line::from(""),
+        Line::from("Close help: Esc, h, or ?"),
+    ];
+
+    let block = Block::default()
+        .title("Help")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+    frame.render_widget(Clear, popup);
+    frame.render_widget(Paragraph::new(help_lines).block(block), popup);
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(area);
+
+    let horizontal = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(vertical[1]);
+
+    horizontal[1]
 }

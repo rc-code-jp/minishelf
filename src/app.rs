@@ -28,6 +28,7 @@ pub struct App {
     pub status_message: String,
     pub last_git_refresh: Instant,
     pub should_quit: bool,
+    pub show_help: bool,
     clipboard: Option<Clipboard>,
     status_expires_at: Option<Instant>,
     git_refresh_tx: Sender<GitSnapshot>,
@@ -47,6 +48,7 @@ pub enum Command {
     PreviewDown,
     RefreshGit,
     TogglePreviewMode,
+    ToggleHelp,
     NextChange,
     PrevChange,
     CopyRelativePath,
@@ -70,6 +72,7 @@ impl App {
             status_message: String::from("ready"),
             last_git_refresh: Instant::now(),
             should_quit: false,
+            show_help: false,
             clipboard: Clipboard::new().ok(),
             status_expires_at: None,
             git_refresh_tx,
@@ -82,6 +85,18 @@ impl App {
 
     pub fn handle_command(&mut self, command: Command) {
         self.poll_background_tasks();
+
+        if self.show_help {
+            match command {
+                Command::ToggleHelp | Command::Collapse => {
+                    self.show_help = false;
+                }
+                Command::Quit => self.should_quit = true,
+                _ => {}
+            }
+            return;
+        }
+
         match command {
             Command::MoveUp => match self.focus {
                 FocusPane::Tree => {
@@ -122,6 +137,7 @@ impl App {
             Command::PreviewDown => self.preview.scroll_down(1),
             Command::RefreshGit => self.request_git_refresh(true),
             Command::TogglePreviewMode => self.toggle_preview_mode(),
+            Command::ToggleHelp => self.show_help = true,
             Command::NextChange => self.jump_change(true),
             Command::PrevChange => self.jump_change(false),
             Command::CopyRelativePath => self.copy_relative_path(),
@@ -330,6 +346,22 @@ mod tests {
 
         app.handle_command(Command::TogglePreviewMode);
         assert_eq!(app.preview.render_mode, PreviewRenderMode::Diff);
+    }
+
+    #[test]
+    fn help_toggles_and_blocks_navigation_commands() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        let mut app = App::new(tmp.path().to_path_buf()).expect("app should build");
+        let before = app.tree.selected_path().to_path_buf();
+
+        app.handle_command(Command::ToggleHelp);
+        assert!(app.show_help);
+
+        app.handle_command(Command::MoveDown);
+        assert_eq!(app.tree.selected_path(), before.as_path());
+
+        app.handle_command(Command::ToggleHelp);
+        assert!(!app.show_help);
     }
 
     fn select_by_file_name(app: &mut App, file_name: &str) {
