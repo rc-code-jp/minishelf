@@ -7,6 +7,7 @@ mod ui;
 
 use std::io;
 use std::path::PathBuf;
+use std::process::Command as ProcessCommand;
 use std::time::Instant;
 
 use anyhow::Result;
@@ -68,6 +69,17 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, startup_root: Path
             }
         }
 
+        if let Some(path) = app.take_external_markdown_preview_request() {
+            match run_glow_preview(terminal, &path) {
+                Ok(()) => {}
+                Err(err) => {
+                    app.status_message = format!("glow failed: {err}");
+                }
+            }
+            last_tick = Instant::now();
+            continue;
+        }
+
         if last_tick.elapsed() >= REFRESH_INTERVAL {
             app.periodic_refresh();
             last_tick = Instant::now();
@@ -75,6 +87,37 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, startup_root: Path
     }
 
     Ok(())
+}
+
+fn run_glow_preview(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    path: &std::path::Path,
+) -> Result<()> {
+    let glow_ready = ProcessCommand::new("glow")
+        .arg("--version")
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    if !glow_ready {
+        anyhow::bail!("glow not found (install: brew install glow)");
+    }
+
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+
+    let glow_result = ProcessCommand::new("glow").arg("-p").arg(path).status();
+
+    enable_raw_mode()?;
+    execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+
+    *terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+    terminal.clear()?;
+
+    match glow_result {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => anyhow::bail!("glow exited with status: {status}"),
+        Err(err) => anyhow::bail!("{err}"),
+    }
 }
 
 fn resolve_startup_root(path: Option<PathBuf>) -> Result<PathBuf> {

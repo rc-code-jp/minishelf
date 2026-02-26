@@ -13,6 +13,7 @@ pub fn map_event(key: KeyEvent) -> Option<Command> {
         (KeyCode::Char('h'), _) | (KeyCode::Left, _) | (KeyCode::Esc, _) => Some(Command::Collapse),
         (KeyCode::Char('r'), _) => Some(Command::RefreshGit),
         (KeyCode::Char('v'), _) => Some(Command::TogglePreviewMode),
+        (KeyCode::Char('o'), _) => Some(Command::OpenExternalMarkdownPreview),
         (KeyCode::Char('?'), _) | (KeyCode::F(1), _) => Some(Command::ToggleHelp),
         (KeyCode::Char('n'), _) => Some(Command::NextChange),
         (KeyCode::Char('N'), _) => Some(Command::PrevChange),

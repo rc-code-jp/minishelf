@@ -163,6 +163,7 @@ fn render_help(frame: &mut Frame<'_>, area: Rect) {
         Line::from("  Ctrl+d / PageDown      Scroll preview down"),
         Line::from("  v                      Toggle preview mode (raw <-> diff)"),
         Line::from("  n / N                  Jump to next / previous change in diff mode"),
+        Line::from("  o                      Open markdown in external glow preview"),
         Line::from(""),
         Line::from("General"),
         Line::from("  r                      Refresh git status"),

@@ -36,6 +36,7 @@ pub struct App {
     git_refresh_in_flight: bool,
     pending_manual_refresh: bool,
     preferred_preview_mode: Option<PreviewRenderMode>,
+    pending_external_markdown_preview: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -48,6 +49,7 @@ pub enum Command {
     PreviewDown,
     RefreshGit,
     TogglePreviewMode,
+    OpenExternalMarkdownPreview,
     ToggleHelp,
     NextChange,
     PrevChange,
@@ -80,6 +82,7 @@ impl App {
             git_refresh_in_flight: false,
             pending_manual_refresh: false,
             preferred_preview_mode: None,
+            pending_external_markdown_preview: None,
         })
     }
 
@@ -137,6 +140,7 @@ impl App {
             Command::PreviewDown => self.preview.scroll_down(1),
             Command::RefreshGit => self.request_git_refresh(true),
             Command::TogglePreviewMode => self.toggle_preview_mode(),
+            Command::OpenExternalMarkdownPreview => self.request_external_markdown_preview(),
             Command::ToggleHelp => self.show_help = true,
             Command::NextChange => self.jump_change(true),
             Command::PrevChange => self.jump_change(false),
@@ -232,6 +236,15 @@ impl App {
         }
     }
 
+    fn request_external_markdown_preview(&mut self) {
+        let selected = self.tree.selected_path().to_path_buf();
+        if !is_markdown_path(&selected) {
+            self.set_temporary_status("glow preview is available only for markdown files");
+            return;
+        }
+        self.pending_external_markdown_preview = Some(selected);
+    }
+
     fn copy_relative_path(&mut self) {
         let selected = self.tree.selected_path();
         match format_relative_with_at(&self.startup_root, selected) {
@@ -272,6 +285,10 @@ impl App {
         self.status_message = msg.into();
         self.status_expires_at = Some(Instant::now() + COPY_STATUS_DURATION);
     }
+
+    pub fn take_external_markdown_preview_request(&mut self) -> Option<PathBuf> {
+        self.pending_external_markdown_preview.take()
+    }
 }
 
 pub fn format_relative_with_at(startup_root: &Path, selected: &Path) -> anyhow::Result<String> {
@@ -293,6 +310,17 @@ fn normalize_to_slashes(path: &Path) -> String {
         .join("/")
 }
 
+fn is_markdown_path(path: &Path) -> bool {
+    let Some(ext) = path.extension() else {
+        return false;
+    };
+
+    matches!(
+        ext.to_string_lossy().to_ascii_lowercase().as_str(),
+        "md" | "markdown"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -304,6 +332,7 @@ mod tests {
     use crate::preview::PreviewRenderMode;
 
     use super::format_relative_with_at;
+    use super::is_markdown_path;
     use super::{App, Command};
 
     #[test]
@@ -349,6 +378,13 @@ mod tests {
     }
 
     #[test]
+    fn markdown_path_detection() {
+        assert!(is_markdown_path(Path::new("README.md")));
+        assert!(is_markdown_path(Path::new("README.markdown")));
+        assert!(!is_markdown_path(Path::new("README.txt")));
+    }
+
+    #[test]
     fn help_toggles_and_blocks_navigation_commands() {
         let tmp = tempdir().expect("tmpdir should exist");
         let mut app = App::new(tmp.path().to_path_buf()).expect("app should build");
@@ -362,6 +398,28 @@ mod tests {
 
         app.handle_command(Command::ToggleHelp);
         assert!(!app.show_help);
+    }
+
+    #[test]
+    fn markdown_external_preview_request_is_created_for_markdown_only() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        let md = tmp.path().join("README.md");
+        let txt = tmp.path().join("README.txt");
+        fs::write(&md, "# title").expect("write should succeed");
+        fs::write(&txt, "plain").expect("write should succeed");
+
+        let mut app = App::new(tmp.path().to_path_buf()).expect("app should build");
+        select_by_file_name(&mut app, "README.md");
+        app.handle_command(Command::OpenExternalMarkdownPreview);
+        assert_eq!(
+            app.take_external_markdown_preview_request()
+                .expect("request should exist"),
+            md
+        );
+
+        select_by_file_name(&mut app, "README.txt");
+        app.handle_command(Command::OpenExternalMarkdownPreview);
+        assert!(app.take_external_markdown_preview_request().is_none());
     }
 
     fn select_by_file_name(app: &mut App, file_name: &str) {
