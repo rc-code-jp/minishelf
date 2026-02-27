@@ -45,6 +45,7 @@ brew install rc-code-jp/minishelf/minishelf
 ### 2) リリースバイナリを直接使う
 
 GitHub Releases からご利用環境向けアーカイブを取得し、展開して `minishelf` バイナリを PATH の通った場所へ配置してください。
+各リリースには `checksums.txt` と署名ファイル（`checksums.txt.sig` / `checksums.txt.pem`）を含めています。検証方法は [`docs/release.md`](docs/release.md) を参照してください。
 
 現在の配布ターゲット:
 - macOS Apple Silicon (`aarch64`)
@@ -131,31 +132,9 @@ tree_ratio_preview_focused = 10
 
 ---
 
-## メンテナー向け: リリース手順
+## メンテナー向け情報
 
-`scripts/release.sh` で事前チェックからタグ push までを実行します。
-
-```bash
-./scripts/release.sh 0.1.15
-```
-
-このスクリプトは以下を行います。
-
-1. `main` ブランチであることを確認
-2. ワークツリーが clean であることを確認
-3. `cargo fmt --check` / `cargo clippy --all-targets --all-features -D warnings` / `cargo test` を実行
-4. `Cargo.toml` の `version` を更新し、`chore(release): v<version>` で commit
-5. `v<version>` タグを作成して `origin` に push
-
-その後、GitHub Actions がリリース成果物を作成します。
-   - `minishelf-<version>-linux-x86_64.tar.gz`
-   - `minishelf-<version>-macos-aarch64.tar.gz`
-   - `checksums.txt`
-同ワークフローで Homebrew formula 更新用のブランチ（`chore/formula-<version>`）が生成されるため、GitHub Actions の実行ログ（Summary）に出力されるリンクから手動でプルリクエストを作成し、マージしてください。
-
-> セキュリティメモ:
-> - リリースワークフローは最小権限（job 単位）で実行されます。
-> - `Formula/minishelf.rb` の更新は `main` へ直接 push せず、PR 経由でレビューして反映します。
+リリース手順は [`docs/release.md`](docs/release.md) を参照してください。
 
 ### Homebrew formula テンプレート
 

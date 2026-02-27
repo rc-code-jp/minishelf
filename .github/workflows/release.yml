@@ -5,14 +5,46 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (vX.Y.Z)"
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 jobs:
+  resolve_ref:
+    name: resolve release tag
+    runs-on: ubuntu-24.04
+    outputs:
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - name: Resolve and validate tag
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+
+          if [[ ! "$tag" =~ ^v[0-9]+(\.[0-9]+){2}([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid tag: '$tag' (expected vX.Y.Z or pre-release form like vX.Y.Z-rc.1)" >&2
+            exit 1
+          fi
+
+          echo "release_tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
   build:
     name: build (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
+    needs: resolve_ref
     strategy:
       fail-fast: false
       matrix:
@@ -41,7 +73,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
+          version="${{ needs.resolve_ref.outputs.version }}"
           pkg="minishelf-${version}-${{ matrix.archive_suffix }}"
           mkdir -p dist
           cp "target/${{ matrix.target }}/release/minishelf" minishelf
@@ -57,9 +89,10 @@ jobs:
   release:
     name: create release
     runs-on: ubuntu-24.04
-    needs: build
+    needs: [resolve_ref, build]
     permissions:
       contents: write
+      id-token: write
 
     steps:
       - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
@@ -79,24 +112,36 @@ jobs:
           cd dist
           shasum -a 256 *.tar.gz > checksums.txt
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.8.1
+
+      - name: Sign checksums (keyless)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes \
+            --output-signature dist/checksums.txt.sig \
+            --output-certificate dist/checksums.txt.pem \
+            dist/checksums.txt
+
       - name: Publish GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
+          tag="${{ needs.resolve_ref.outputs.release_tag }}"
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" dist/*.tar.gz dist/checksums.txt --clobber
+            gh release upload "$tag" dist/*.tar.gz dist/checksums.txt dist/checksums.txt.sig dist/checksums.txt.pem --clobber
           else
-            gh release create "$tag" dist/*.tar.gz dist/checksums.txt --verify-tag
+            gh release create "$tag" dist/*.tar.gz dist/checksums.txt dist/checksums.txt.sig dist/checksums.txt.pem --verify-tag
           fi
 
   update_formula:
     name: update homebrew formula
     runs-on: ubuntu-24.04
-    needs: release
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [resolve_ref, release]
+    if: startsWith(needs.resolve_ref.outputs.release_tag, 'v')
     permissions:
       contents: write
       pull-requests: write
@@ -126,7 +171,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
+          version="${{ needs.resolve_ref.outputs.version }}"
           mac_sha="$(awk '/minishelf-'"$version"'-macos-aarch64.tar.gz/{print $1}' dist/checksums.txt)"
           linux_sha="$(awk '/minishelf-'"$version"'-linux-x86_64.tar.gz/{print $1}' dist/checksums.txt)"
 
@@ -189,11 +234,11 @@ jobs:
             exit 0
           fi
 
-          branch="chore/formula-${GITHUB_REF_NAME}"
+          branch="chore/formula-${{ needs.resolve_ref.outputs.release_tag }}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Formula/minishelf.rb
-          git commit -m "Update Homebrew formula for ${GITHUB_REF_NAME}"
+          git commit -m "Update Homebrew formula for ${{ needs.resolve_ref.outputs.release_tag }}"
 
           git switch -c "$branch"
           git push --force-with-lease origin "$branch"
@@ -208,4 +253,3 @@ jobs:
           # Add to job summary so it's visible in the GitHub UI
           echo "### 🍺 Formula update pushed to branch \`$branch\`" >> $GITHUB_STEP_SUMMARY
           echo "[👉 Click here to create a Pull Request]($pr_url)" >> $GITHUB_STEP_SUMMARY
-
