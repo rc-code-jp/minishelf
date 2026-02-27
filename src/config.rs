@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub layout: LayoutConfig,
@@ -21,14 +21,6 @@ impl Default for LayoutConfig {
         Self {
             tree_ratio_normal: 70,
             tree_ratio_preview_focused: 10,
-        }
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            layout: LayoutConfig::default(),
         }
     }
 }
@@ -54,10 +46,17 @@ impl Config {
 
     pub fn config_path() -> Option<PathBuf> {
         if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
-            Some(PathBuf::from(config_home).join("minishelf").join("config.toml"))
+            Some(
+                PathBuf::from(config_home)
+                    .join("minishelf")
+                    .join("config.toml"),
+            )
         } else {
             directories::BaseDirs::new().map(|dirs| {
-                dirs.home_dir().join(".config").join("minishelf").join("config.toml")
+                dirs.home_dir()
+                    .join(".config")
+                    .join("minishelf")
+                    .join("config.toml")
             })
         }
     }

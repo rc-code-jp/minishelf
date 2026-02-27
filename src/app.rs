@@ -69,14 +69,19 @@ impl App {
         let (git_refresh_tx, git_refresh_rx) = mpsc::channel();
         let (fs_refresh_tx, fs_refresh_rx) = mpsc::channel();
 
-        let mut fs_watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-            if let Ok(event) = res {
-                // Ignore Access/Metadata events as they don't change the tree structure
-                if !matches!(event.kind, notify::EventKind::Access(_) | notify::EventKind::Modify(notify::event::ModifyKind::Metadata(_))) {
-                    let _ = fs_refresh_tx.send(());
+        let mut fs_watcher =
+            notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+                if let Ok(event) = res {
+                    // Ignore Access/Metadata events as they don't change the tree structure
+                    if !matches!(
+                        event.kind,
+                        notify::EventKind::Access(_)
+                            | notify::EventKind::Modify(notify::event::ModifyKind::Metadata(_))
+                    ) {
+                        let _ = fs_refresh_tx.send(());
+                    }
                 }
-            }
-        })?;
+            })?;
         fs_watcher.watch(&startup_root, RecursiveMode::Recursive)?;
 
         Ok(Self {
