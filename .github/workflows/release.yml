@@ -197,3 +197,15 @@ jobs:
 
           git switch -c "$branch"
           git push --force-with-lease origin "$branch"
+
+          pr_url="https://github.com/${{ github.repository }}/compare/main...${branch}?expand=1"
+          echo "========================================="
+          echo "🍺 Formula update complete!"
+          echo "👉 Please create a Pull Request here:"
+          echo "   $pr_url"
+          echo "========================================="
+          
+          # Add to job summary so it's visible in the GitHub UI
+          echo "### 🍺 Formula update pushed to branch \`$branch\`" >> $GITHUB_STEP_SUMMARY
+          echo "[👉 Click here to create a Pull Request]($pr_url)" >> $GITHUB_STEP_SUMMARY
+

@@ -145,7 +145,8 @@ git push origin v0.1.0
    - `minishelf-<version>-linux-x86_64.tar.gz`
    - `minishelf-<version>-macos-aarch64.tar.gz`
    - `checksums.txt`
-4. 同ワークフローで Homebrew formula 更新用の PR も自動作成
+4. 同ワークフローで Homebrew formula 更新用のブランチ（`chore/formula-<version>`）が生成されます。
+5. GitHub Actions の実行ログ（Summary）に出力されるリンクから手動でプルリクエストを作成し、マージしてください。
 
 > セキュリティメモ:
 > - リリースワークフローは最小権限（job 単位）で実行されます。
