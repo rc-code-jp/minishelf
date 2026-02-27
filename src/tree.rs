@@ -63,6 +63,11 @@ impl Tree {
         }
     }
 
+    pub fn refresh(&mut self) -> anyhow::Result<()> {
+        let current_selected = self.selected_path().to_path_buf();
+        self.reload_entries(Some(&current_selected))
+    }
+
     pub fn expand_selected(&mut self) -> anyhow::Result<()> {
         let Some(selected) = self.entries.get(self.selected) else {
             return Ok(());

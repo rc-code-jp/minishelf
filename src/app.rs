@@ -4,6 +4,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use arboard::Clipboard;
+use notify::{RecursiveMode, Watcher};
 
 use crate::config::Config;
 use crate::git_status::{GitSnapshot, GitState};
@@ -34,6 +35,8 @@ pub struct App {
     status_expires_at: Option<Instant>,
     git_refresh_tx: Sender<GitSnapshot>,
     git_refresh_rx: Receiver<GitSnapshot>,
+    fs_refresh_rx: Receiver<()>,
+    _fs_watcher: notify::RecommendedWatcher,
     git_refresh_in_flight: bool,
     pending_manual_refresh: bool,
     preferred_preview_mode: Option<PreviewRenderMode>,
@@ -64,6 +67,17 @@ impl App {
         let git = GitSnapshot::collect(&startup_root);
         let preview = PreviewState::from_path(&startup_root, tree.selected_path(), None);
         let (git_refresh_tx, git_refresh_rx) = mpsc::channel();
+        let (fs_refresh_tx, fs_refresh_rx) = mpsc::channel();
+
+        let mut fs_watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+            if let Ok(event) = res {
+                // Ignore Access/Metadata events as they don't change the tree structure
+                if !matches!(event.kind, notify::EventKind::Access(_) | notify::EventKind::Modify(notify::event::ModifyKind::Metadata(_))) {
+                    let _ = fs_refresh_tx.send(());
+                }
+            }
+        })?;
+        fs_watcher.watch(&startup_root, RecursiveMode::Recursive)?;
 
         Ok(Self {
             config,
@@ -80,6 +94,8 @@ impl App {
             status_expires_at: None,
             git_refresh_tx,
             git_refresh_rx,
+            fs_refresh_rx,
+            _fs_watcher: fs_watcher,
             git_refresh_in_flight: false,
             pending_manual_refresh: false,
             preferred_preview_mode: None,
@@ -158,6 +174,19 @@ impl App {
             if Instant::now() >= expires_at {
                 self.status_message = String::from("ready");
                 self.status_expires_at = None;
+            }
+        }
+
+        let mut needs_tree_refresh = false;
+        while let Ok(()) = self.fs_refresh_rx.try_recv() {
+            needs_tree_refresh = true;
+        }
+
+        if needs_tree_refresh {
+            if let Err(err) = self.tree.refresh() {
+                self.status_message = format!("tree refresh failed: {err}");
+            } else {
+                self.sync_preview();
             }
         }
 
