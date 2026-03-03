@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::process::Command as ProcessCommand;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -56,6 +57,7 @@ pub enum Command {
     NextChange,
     PrevChange,
     CopyRelativePath,
+    OpenInFinder,
     Quit,
 }
 
@@ -165,6 +167,7 @@ impl App {
             Command::NextChange => self.jump_change(true),
             Command::PrevChange => self.jump_change(false),
             Command::CopyRelativePath => self.copy_relative_path(),
+            Command::OpenInFinder => self.open_in_finder(),
             Command::Quit => self.should_quit = true,
         }
     }
@@ -286,6 +289,24 @@ impl App {
         }
     }
 
+    fn open_in_finder(&mut self) {
+        let selected = self.tree.selected_path();
+        let target_dir = resolve_directory_to_open(selected, self.tree.selected_is_dir());
+
+        let mut command = finder_open_command(target_dir);
+        match command.status() {
+            Ok(status) if status.success() => {
+                self.set_temporary_status(format!("opened: {}", target_dir.display()));
+            }
+            Ok(status) => {
+                self.set_temporary_status(format!("open failed (status: {status})"));
+            }
+            Err(err) => {
+                self.set_temporary_status(format!("open failed: {err}"));
+            }
+        }
+    }
+
     pub fn selected_git_state(&self, path: &Path, is_dir: bool) -> GitState {
         self.git.state_for(path, is_dir)
     }
@@ -330,6 +351,30 @@ fn normalize_to_slashes(path: &Path) -> String {
         .join("/")
 }
 
+fn resolve_directory_to_open(selected: &Path, selected_is_dir: bool) -> &Path {
+    if selected_is_dir || selected.is_dir() {
+        selected
+    } else {
+        selected.parent().unwrap_or(selected)
+    }
+}
+
+fn finder_open_command(path: &Path) -> ProcessCommand {
+    #[cfg(target_os = "macos")]
+    {
+        let mut command = ProcessCommand::new("open");
+        command.arg(path);
+        command
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let mut command = ProcessCommand::new("xdg-open");
+        command.arg(path);
+        command
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -340,7 +385,7 @@ mod tests {
 
     use crate::preview::PreviewRenderMode;
 
-    use super::format_relative_with_at;
+    use super::{format_relative_with_at, resolve_directory_to_open};
     use super::{App, Command};
 
     #[test]
@@ -399,6 +444,20 @@ mod tests {
 
         app.handle_command(Command::ToggleHelp);
         assert!(!app.show_help);
+    }
+
+    #[test]
+    fn resolve_directory_returns_parent_for_file() {
+        let file = Path::new("/repo/docs/sample.txt");
+        let out = resolve_directory_to_open(file, false);
+        assert_eq!(out, Path::new("/repo/docs"));
+    }
+
+    #[test]
+    fn resolve_directory_keeps_directory_selection() {
+        let dir = Path::new("/repo/docs");
+        let out = resolve_directory_to_open(dir, true);
+        assert_eq!(out, dir);
     }
 
     fn select_by_file_name(app: &mut App, file_name: &str) {
