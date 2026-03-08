@@ -373,6 +373,7 @@ impl App {
     pub fn preview_title(&self) -> String {
         match self.preview.kind {
             PreviewKind::Text => format!("Preview ({})", self.preview.mode_label()),
+            PreviewKind::Directory => String::from("Preview (directory)"),
             PreviewKind::Message => String::from("Preview (message)"),
         }
     }
@@ -612,6 +613,17 @@ mod tests {
             app.selected_git_state(&ignored_file, false),
             GitState::Ignored
         );
+    }
+
+    #[test]
+    fn preview_title_for_directory_uses_directory_label() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        fs::create_dir_all(tmp.path().join("sub")).expect("create dir should succeed");
+
+        let mut app = App::new(tmp.path().to_path_buf()).expect("app should build");
+        select_by_file_name(&mut app, "sub");
+
+        assert_eq!(app.preview_title(), "Preview (directory)");
     }
 
     #[test]

@@ -6,6 +6,7 @@ use ratatui::Frame;
 
 use crate::app::App;
 use crate::git_status::GitState;
+use crate::preview::PreviewKind;
 use crate::preview::PreviewRenderMode;
 
 pub fn render(frame: &mut Frame<'_>, app: &App) {
@@ -84,7 +85,6 @@ fn render_tree(frame: &mut Frame<'_>, app: &App, area: Rect) {
 fn render_preview(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let height = area.height.saturating_sub(2) as usize;
     let inner_width = area.width.saturating_sub(2) as usize;
-    let line_no_width = app.preview.lines.len().max(1).to_string().len().max(3);
     let start = app
         .preview
         .scroll
@@ -94,20 +94,32 @@ fn render_preview(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let mut lines: Vec<Line<'_>> = Vec::with_capacity(end.saturating_sub(start));
     for (offset, line) in app.preview.lines[start..end].iter().enumerate() {
         let absolute_index = start + offset;
-        let style = match app.preview.render_mode {
-            PreviewRenderMode::Diff => {
-                style_for_diff_line(app.preview.is_changed_line(absolute_index))
+        let (style, padded) = match app.preview.kind {
+            PreviewKind::Directory => {
+                let entry = &app.preview.directory_entries[absolute_index];
+                let style = style_for_git(app.selected_git_state(&entry.path, entry.is_dir));
+                let padded = format!("{:<width$}", line, width = inner_width);
+                (style, padded)
             }
-            PreviewRenderMode::Raw => Style::default(),
+            PreviewKind::Text | PreviewKind::Message => {
+                let line_no_width = app.preview.lines.len().max(1).to_string().len().max(3);
+                let style = match app.preview.render_mode {
+                    PreviewRenderMode::Diff => {
+                        style_for_diff_line(app.preview.is_changed_line(absolute_index))
+                    }
+                    PreviewRenderMode::Raw => Style::default(),
+                };
+                let sanitized = line.replace('\t', "    ");
+                let numbered = format!(
+                    "{:>line_no_width$} | {}",
+                    absolute_index + 1,
+                    sanitized,
+                    line_no_width = line_no_width
+                );
+                let padded = format!("{:<width$}", numbered, width = inner_width);
+                (style, padded)
+            }
         };
-        let sanitized = line.replace('\t', "    ");
-        let numbered = format!(
-            "{:>line_no_width$} | {}",
-            absolute_index + 1,
-            sanitized,
-            line_no_width = line_no_width
-        );
-        let padded = format!("{:<width$}", numbered, width = inner_width);
         lines.push(Line::from(Span::styled(padded, style)));
     }
 

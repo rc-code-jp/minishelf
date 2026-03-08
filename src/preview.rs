@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use git2::{DiffFlags, DiffFormat, DiffOptions, Repository};
@@ -8,6 +9,7 @@ const MAX_PREVIEW_BYTES: u64 = 256 * 1024;
 #[derive(Debug, Clone, Copy)]
 pub enum PreviewKind {
     Text,
+    Directory,
     Message,
 }
 
@@ -31,9 +33,17 @@ pub struct PreviewState {
     pub kind: PreviewKind,
     pub render_mode: PreviewRenderMode,
     pub lines: Vec<String>,
+    pub directory_entries: Vec<PreviewDirectoryEntry>,
     pub scroll: usize,
     available_modes: Vec<PreviewRenderMode>,
     changed_lines: Vec<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewDirectoryEntry {
+    pub path: PathBuf,
+    pub name: String,
+    pub is_dir: bool,
 }
 
 impl PreviewState {
@@ -43,7 +53,10 @@ impl PreviewState {
         preferred_mode: Option<PreviewRenderMode>,
     ) -> Self {
         if path.is_dir() {
-            return Self::message("directory");
+            return match load_directory_listing(startup_root, path) {
+                Ok(lines) => Self::directory(lines),
+                Err(msg) => Self::message(msg),
+            };
         }
 
         let raw_lines = match load_raw_file(path) {
@@ -83,6 +96,7 @@ impl PreviewState {
             kind: PreviewKind::Text,
             render_mode,
             lines,
+            directory_entries: Vec::new(),
             scroll: 0,
             available_modes,
             changed_lines,
@@ -94,6 +108,28 @@ impl PreviewState {
             kind: PreviewKind::Message,
             render_mode: PreviewRenderMode::Raw,
             lines: vec![msg.into()],
+            directory_entries: Vec::new(),
+            scroll: 0,
+            available_modes: vec![PreviewRenderMode::Raw],
+            changed_lines: Vec::new(),
+        }
+    }
+
+    pub fn directory(entries: Vec<PreviewDirectoryEntry>) -> Self {
+        Self {
+            kind: PreviewKind::Directory,
+            render_mode: PreviewRenderMode::Raw,
+            lines: entries
+                .iter()
+                .map(|entry| {
+                    if entry.is_dir {
+                        format!("{}/", entry.name)
+                    } else {
+                        entry.name.clone()
+                    }
+                })
+                .collect(),
+            directory_entries: entries,
             scroll: 0,
             available_modes: vec![PreviewRenderMode::Raw],
             changed_lines: Vec::new(),
@@ -164,6 +200,67 @@ impl PreviewState {
 #[derive(Debug, Clone)]
 struct DiffView {
     changed_lines: Vec<usize>,
+}
+
+#[derive(Debug)]
+struct DirectoryEntry {
+    path: PathBuf,
+    name: String,
+    is_dir: bool,
+}
+
+fn load_directory_listing(
+    startup_root: &Path,
+    path: &Path,
+) -> Result<Vec<PreviewDirectoryEntry>, String> {
+    let read_dir = fs::read_dir(path).map_err(|err| format!("preview read failed: {err}"))?;
+    let mut entries = Vec::new();
+
+    for entry_res in read_dir {
+        let entry = match entry_res {
+            Ok(entry) => entry,
+            Err(_) => continue,
+        };
+
+        let entry_path = entry.path();
+        if !entry_path.starts_with(startup_root) {
+            continue;
+        }
+
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(_) => continue,
+        };
+
+        entries.push(DirectoryEntry {
+            path: entry_path,
+            name: entry.file_name().to_string_lossy().to_string(),
+            is_dir: file_type.is_dir(),
+        });
+    }
+
+    entries.sort_by(compare_directory_entries);
+
+    Ok(entries
+        .into_iter()
+        .map(|entry| PreviewDirectoryEntry {
+            path: entry.path,
+            name: entry.name,
+            is_dir: entry.is_dir,
+        })
+        .collect())
+}
+
+fn compare_directory_entries(a: &DirectoryEntry, b: &DirectoryEntry) -> std::cmp::Ordering {
+    match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a
+            .name
+            .to_lowercase()
+            .cmp(&b.name.to_lowercase())
+            .then_with(|| a.path.cmp(&b.path)),
+    }
 }
 
 fn load_raw_file(path: &Path) -> Result<Vec<String>, String> {
@@ -303,10 +400,38 @@ mod tests {
     use super::{PreviewKind, PreviewRenderMode, PreviewState};
 
     #[test]
-    fn preview_directory_returns_message() {
+    fn preview_directory_returns_listing() {
         let tmp = tempdir().expect("tmpdir should exist");
+        fs::create_dir(tmp.path().join("b_dir")).expect("dir should be created");
+        fs::create_dir(tmp.path().join("a_dir")).expect("dir should be created");
+        fs::write(tmp.path().join("z_file.txt"), "z").expect("file should be created");
+        fs::write(tmp.path().join("m_file.txt"), "m").expect("file should be created");
+
         let preview = PreviewState::from_path(tmp.path(), tmp.path(), None);
-        assert!(matches!(preview.kind, PreviewKind::Message));
+        assert!(matches!(preview.kind, PreviewKind::Directory));
+        assert_eq!(
+            preview.lines,
+            vec![
+                "a_dir/".to_string(),
+                "b_dir/".to_string(),
+                "m_file.txt".to_string(),
+                "z_file.txt".to_string()
+            ]
+        );
+        assert_eq!(preview.directory_entries.len(), 4);
+        assert!(preview.directory_entries[0].is_dir);
+        assert_eq!(preview.directory_entries[0].name, "a_dir");
+        assert_eq!(preview.directory_entries[2].name, "m_file.txt");
+    }
+
+    #[test]
+    fn preview_empty_directory_returns_empty_listing() {
+        let tmp = tempdir().expect("tmpdir should exist");
+
+        let preview = PreviewState::from_path(tmp.path(), tmp.path(), None);
+        assert!(matches!(preview.kind, PreviewKind::Directory));
+        assert!(preview.lines.is_empty());
+        assert!(preview.directory_entries.is_empty());
     }
 
     #[test]

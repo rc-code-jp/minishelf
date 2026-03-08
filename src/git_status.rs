@@ -167,7 +167,8 @@ fn path_is_ignored(repo: &Repository, relative: &Path, is_dir: bool) -> bool {
     }
     with_slash.push('/');
 
-    repo.is_path_ignored(Path::new(&with_slash)).unwrap_or(false)
+    repo.is_path_ignored(Path::new(&with_slash))
+        .unwrap_or(false)
 }
 
 fn map_status(status: Status) -> GitState {
