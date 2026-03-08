@@ -17,7 +17,7 @@
 - ワークツリーが clean であること
 - ローカルで次の確認が通ること
   - `cargo fmt --check`
-  - `cargo clippy --all-targets --all-features -D warnings`
+  - `cargo clippy --all-targets --all-features -- -D warnings`
   - `cargo test`
 - `rc-code-jp/homebrew-tap` リポジトリが作成済みであること
 
@@ -25,7 +25,7 @@
 
 ### 1. リリース版を commit して push
 
-`Cargo.toml` の `version` を次の版へ更新し、`main` に push します。
+`Cargo.toml` の `version` を次の版へ更新します。`Cargo.lock` もルート package の version 更新が入るため、一緒に commit してください。
 
 例:
 
