@@ -12,8 +12,8 @@ use crate::git_status::{GitSnapshot, GitState};
 use crate::preview::{PreviewKind, PreviewRenderMode, PreviewState};
 use crate::tree::Tree;
 
-pub const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const COPY_STATUS_DURATION: Duration = Duration::from_secs(3);
+const FS_REFRESH_DEBOUNCE: Duration = Duration::from_millis(300);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusPane {
@@ -41,6 +41,8 @@ pub struct App {
     git_refresh_in_flight: bool,
     pending_manual_refresh: bool,
     preferred_preview_mode: Option<PreviewRenderMode>,
+    pending_fs_refresh: bool,
+    last_fs_event_at: Option<Instant>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -112,6 +114,8 @@ impl App {
             git_refresh_in_flight: false,
             pending_manual_refresh: false,
             preferred_preview_mode: None,
+            pending_fs_refresh: false,
+            last_fs_event_at: None,
         })
     }
 
@@ -181,11 +185,6 @@ impl App {
         None
     }
 
-    pub fn periodic_refresh(&mut self) {
-        self.request_git_refresh(false);
-        self.poll_background_tasks();
-    }
-
     pub fn poll_background_tasks(&mut self) {
         if let Some(expires_at) = self.status_expires_at {
             if Instant::now() >= expires_at {
@@ -200,10 +199,19 @@ impl App {
         }
 
         if needs_tree_refresh {
+            self.pending_fs_refresh = true;
+            self.last_fs_event_at = Some(Instant::now());
+        }
+
+        if self.should_flush_fs_refresh() {
+            self.pending_fs_refresh = false;
+            self.last_fs_event_at = None;
+
             if let Err(err) = self.tree.refresh() {
                 self.status_message = format!("tree refresh failed: {err}");
             } else {
                 self.sync_preview();
+                self.request_git_refresh(false);
             }
         }
 
@@ -248,6 +256,19 @@ impl App {
             let snapshot = GitSnapshot::collect(&root);
             let _ = tx.send(snapshot);
         });
+    }
+
+    pub fn on_focus_gained(&mut self) {
+        self.pending_fs_refresh = false;
+        self.last_fs_event_at = None;
+
+        if let Err(err) = self.tree.refresh() {
+            self.status_message = format!("tree refresh failed: {err}");
+            return;
+        }
+
+        self.sync_preview();
+        self.request_git_refresh(false);
     }
 
     fn sync_preview(&mut self) {
@@ -352,6 +373,13 @@ impl App {
     pub fn set_external_status(&mut self, msg: impl Into<String>) {
         self.set_temporary_status(msg);
     }
+
+    fn should_flush_fs_refresh(&self) -> bool {
+        self.pending_fs_refresh
+            && self
+                .last_fs_event_at
+                .is_some_and(|at| at.elapsed() >= FS_REFRESH_DEBOUNCE)
+    }
 }
 
 pub fn format_relative_with_at(startup_root: &Path, selected: &Path) -> anyhow::Result<String> {
@@ -401,13 +429,16 @@ fn finder_open_command(path: &Path) -> ProcessCommand {
 mod tests {
     use std::fs;
     use std::path::Path;
+    use std::time::{Duration, Instant};
 
     use git2::{IndexAddOption, Repository, Signature};
     use tempfile::tempdir;
 
     use crate::preview::PreviewRenderMode;
 
-    use super::{format_relative_with_at, resolve_directory_to_open, AppEffect};
+    use super::{
+        format_relative_with_at, resolve_directory_to_open, AppEffect, FS_REFRESH_DEBOUNCE,
+    };
     use super::{App, Command};
 
     #[test]
@@ -508,6 +539,27 @@ mod tests {
         let dir = Path::new("/repo/docs");
         let out = resolve_directory_to_open(dir, true);
         assert_eq!(out, dir);
+    }
+
+    #[test]
+    fn fs_refresh_flushes_after_debounce() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        let mut app = App::new(tmp.path().to_path_buf()).expect("app should build");
+        app.pending_fs_refresh = true;
+        app.last_fs_event_at =
+            Some(Instant::now() - FS_REFRESH_DEBOUNCE - Duration::from_millis(1));
+
+        assert!(app.should_flush_fs_refresh());
+    }
+
+    #[test]
+    fn fs_refresh_waits_within_debounce_window() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        let mut app = App::new(tmp.path().to_path_buf()).expect("app should build");
+        app.pending_fs_refresh = true;
+        app.last_fs_event_at = Some(Instant::now());
+
+        assert!(!app.should_flush_fs_refresh());
     }
 
     fn select_by_file_name(app: &mut App, file_name: &str) {

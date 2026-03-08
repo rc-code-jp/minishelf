@@ -10,11 +10,11 @@ use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
-use std::time::Instant;
+use std::time::Duration;
 
 use anyhow::Result;
 use clap::Parser;
-use crossterm::event::{self, Event};
+use crossterm::event::{self, DisableFocusChange, EnableFocusChange, Event};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -22,8 +22,10 @@ use crossterm::terminal::{
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
-use crate::app::{App, AppEffect, REFRESH_INTERVAL};
+use crate::app::{App, AppEffect};
 use crate::input::map_event;
+
+const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -38,7 +40,7 @@ fn main() -> Result<()> {
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableFocusChange)?;
     let _cleanup = TerminalCleanup;
 
     let backend = CrosstermBackend::new(stdout);
@@ -56,38 +58,35 @@ fn main() -> Result<()> {
 
 fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, startup_root: PathBuf) -> Result<()> {
     let mut app = App::new(startup_root)?;
-    let mut last_tick = Instant::now();
 
     while !app.should_quit {
         app.poll_background_tasks();
         terminal.draw(|f| ui::render(f, &app))?;
 
-        let timeout = REFRESH_INTERVAL.saturating_sub(last_tick.elapsed());
-        if event::poll(timeout)? {
-            if let Event::Key(key_event) = event::read()? {
-                if let Some(command) = map_event(key_event) {
-                    if let Some(effect) = app.handle_command(command) {
-                        match effect {
-                            AppEffect::OpenInVi(path) => match open_in_vi(terminal, &path) {
-                                Ok(()) => {
-                                    app.set_external_status(format!(
-                                        "opened in vi: {}",
-                                        path.display()
-                                    ));
-                                }
-                                Err(err) => {
-                                    app.set_external_status(format!("open failed: {err}"));
-                                }
-                            },
+        if event::poll(EVENT_POLL_INTERVAL)? {
+            match event::read()? {
+                Event::Key(key_event) => {
+                    if let Some(command) = map_event(key_event) {
+                        if let Some(effect) = app.handle_command(command) {
+                            match effect {
+                                AppEffect::OpenInVi(path) => match open_in_vi(terminal, &path) {
+                                    Ok(()) => {
+                                        app.set_external_status(format!(
+                                            "opened in vi: {}",
+                                            path.display()
+                                        ));
+                                    }
+                                    Err(err) => {
+                                        app.set_external_status(format!("open failed: {err}"));
+                                    }
+                                },
+                            }
                         }
                     }
                 }
+                Event::FocusGained => app.on_focus_gained(),
+                _ => {}
             }
-        }
-
-        if last_tick.elapsed() >= REFRESH_INTERVAL {
-            app.periodic_refresh();
-            last_tick = Instant::now();
         }
     }
 
@@ -131,6 +130,6 @@ impl Drop for TerminalCleanup {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
         let mut stdout = io::stdout();
-        let _ = execute!(stdout, LeaveAlternateScreen);
+        let _ = execute!(stdout, DisableFocusChange, LeaveAlternateScreen);
     }
 }
