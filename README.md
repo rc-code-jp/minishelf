@@ -25,35 +25,46 @@
   - `untracked`
 - 選択中パスを `@` 付きのルート相対パスでコピー
   - 例: `@docs/sample.txt`
+
 ---
 
 ## インストール
 
-### 1) Homebrew（推奨）
+### 1) Homebrew tap（推奨）
+
+一般ユーザー向けの主導線です。Rust / Cargo は不要です。
 
 ```bash
-brew tap rc-code-jp/minishelf https://github.com/rc-code-jp/minishelf
+brew tap yourorg/tap
 brew install minishelf
 ```
 
-または 1 行で:
+アップデート:
 
 ```bash
-brew install rc-code-jp/minishelf/minishelf
+brew upgrade minishelf
 ```
 
-### 2) リリースバイナリを直接使う
+1 行で入れる場合:
 
-GitHub Releases からご利用環境向けアーカイブを取得し、展開して `minishelf` バイナリを PATH の通った場所へ配置してください。
-各リリースには `checksums.txt` と署名ファイル（`checksums.txt.sig` / `checksums.txt.pem`）を含めています。検証方法は [`docs/release.md`](docs/release.md) を参照してください。
+```bash
+brew install yourorg/tap/minishelf
+```
 
 現在の配布ターゲット:
-- macOS Apple Silicon (`aarch64`)
-- Linux x86_64
+- macOS Apple Silicon (`aarch64-apple-darwin`) のみ
 
-> 注: Intel macOS 向けバイナリは現在未提供です。
+### 2) GitHub Releases から直接入れる
+
+GitHub Releases から `minishelf-<version>-aarch64-apple-darwin.tar.gz` を取得し、展開した `minishelf` バイナリを PATH の通った場所へ配置してください。
+各リリースには `checksums.txt` を添付します。
+
+- 最小構成では署名 / notarization なしで配布できます
+- 推奨構成では Developer ID 署名 + notarization 済みアーカイブにできます
 
 ### 3) ソースから実行（Rust 開発者向け）
+
+一般ユーザー向けの配布方法ではありません。
 
 ```bash
 cargo run -- .
@@ -140,8 +151,7 @@ tree_ratio_preview_focused = 10
 
 ### Homebrew formula テンプレート
 
-`packaging/homebrew/minishelf.rb` を利用し、以下プレースホルダーを置換してください。
+`packaging/homebrew/minishelf.rb` を `yourorg/homebrew-tap` の `Formula/minishelf.rb` にコピーし、以下プレースホルダーを置換してください。
 
 - `__VERSION__`
-- `__SHA256_MACOS_ARM64__`
-- `__SHA256_LINUX_X86_64__`
+- `__SHA256_AARCH64_APPLE_DARWIN__`

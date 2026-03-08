@@ -41,64 +41,120 @@ jobs:
           echo "release_tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
 
-  build:
-    name: build (${{ matrix.target }})
-    runs-on: ${{ matrix.os }}
+  build_macos:
+    name: build macOS Apple Silicon
+    runs-on: macos-14
     needs: resolve_ref
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
-            archive_suffix: linux-x86_64
-          - os: macos-14
-            target: aarch64-apple-darwin
-            archive_suffix: macos-aarch64
-
+    permissions:
+      contents: read
+    env:
+      TARGET: aarch64-apple-darwin
+      ARCHIVE_NAME: minishelf-${{ needs.resolve_ref.outputs.version }}-aarch64-apple-darwin
+      APPLE_CODESIGN_ENABLED: ${{ vars.APPLE_CODESIGN_ENABLED || 'false' }}
+      APPLE_SIGN_IDENTITY: ${{ secrets.APPLE_SIGN_IDENTITY }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+      APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_API_PRIVATE_KEY_BASE64: ${{ secrets.APPLE_API_PRIVATE_KEY_BASE64 }}
     steps:
       - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+        with:
+          ref: ${{ needs.resolve_ref.outputs.release_tag }}
 
       - name: Install Rust toolchain
         shell: bash
         run: |
           set -euo pipefail
           rustup toolchain install stable --profile minimal
-          rustup target add ${{ matrix.target }} --toolchain stable
+          rustup target add "$TARGET" --toolchain stable
 
-      - name: Build
-        run: cargo build --release --locked --target ${{ matrix.target }}
-
-      - name: Package
+      - name: Build release binary
         shell: bash
         run: |
           set -euo pipefail
-          version="${{ needs.resolve_ref.outputs.version }}"
-          pkg="minishelf-${version}-${{ matrix.archive_suffix }}"
-          mkdir -p dist
-          cp "target/${{ matrix.target }}/release/minishelf" minishelf
+          cargo build --release --locked --target "$TARGET"
+          cp "target/$TARGET/release/minishelf" minishelf
           chmod +x minishelf
-          tar -czf "dist/${pkg}.tar.gz" minishelf
 
-      - name: Upload artifacts
+      - name: Import Developer ID certificate
+        if: env.APPLE_CODESIGN_ENABLED == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${APPLE_CERTIFICATE_P12_BASE64:?Missing APPLE_CERTIFICATE_P12_BASE64}"
+          : "${APPLE_CERTIFICATE_PASSWORD:?Missing APPLE_CERTIFICATE_PASSWORD}"
+          : "${APPLE_SIGN_IDENTITY:?Missing APPLE_SIGN_IDENTITY}"
+          security create-keychain -p "$RUNNER_TEMP/codesign" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$RUNNER_TEMP/codesign" build.keychain
+          security set-keychain-settings -lut 21600 build.keychain
+          printf '%s' "$APPLE_CERTIFICATE_P12_BASE64" | base64 -d > "$RUNNER_TEMP/certificate.p12" 2>/dev/null || \
+            printf '%s' "$APPLE_CERTIFICATE_P12_BASE64" | base64 -D > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" \
+            -k build.keychain \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$RUNNER_TEMP/codesign" \
+            build.keychain
+
+      - name: Codesign binary
+        if: env.APPLE_CODESIGN_ENABLED == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          codesign --force --options runtime --sign "$APPLE_SIGN_IDENTITY" minishelf
+          codesign --verify --verbose=2 minishelf
+
+      - name: Notarize binary
+        if: env.APPLE_CODESIGN_ENABLED == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${APPLE_TEAM_ID:?Missing APPLE_TEAM_ID}"
+          : "${APPLE_API_KEY_ID:?Missing APPLE_API_KEY_ID}"
+          : "${APPLE_API_ISSUER_ID:?Missing APPLE_API_ISSUER_ID}"
+          : "${APPLE_API_PRIVATE_KEY_BASE64:?Missing APPLE_API_PRIVATE_KEY_BASE64}"
+          mkdir -p "$RUNNER_TEMP/private_keys"
+          printf '%s' "$APPLE_API_PRIVATE_KEY_BASE64" | base64 -d > "$RUNNER_TEMP/private_keys/AuthKey_$APPLE_API_KEY_ID.p8" 2>/dev/null || \
+            printf '%s' "$APPLE_API_PRIVATE_KEY_BASE64" | base64 -D > "$RUNNER_TEMP/private_keys/AuthKey_$APPLE_API_KEY_ID.p8"
+          ditto -c -k --keepParent minishelf "$RUNNER_TEMP/${ARCHIVE_NAME}.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/${ARCHIVE_NAME}.zip" \
+            --key "$RUNNER_TEMP/private_keys/AuthKey_$APPLE_API_KEY_ID.p8" \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple minishelf
+          spctl --assess --type execute --verbose minishelf
+
+      - name: Package archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          tar -czf "dist/${ARCHIVE_NAME}.tar.gz" minishelf
+
+      - name: Upload release artifact
         uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
         with:
-          name: minishelf-${{ matrix.archive_suffix }}
-          path: dist/*.tar.gz
+          name: ${{ env.ARCHIVE_NAME }}
+          path: dist/${{ env.ARCHIVE_NAME }}.tar.gz
 
   release:
-    name: create release
+    name: publish release
     runs-on: ubuntu-24.04
-    needs: [resolve_ref, build]
+    needs: [resolve_ref, build_macos]
     permissions:
       contents: write
-      id-token: write
-
+    env:
+      APPLE_CODESIGN_ENABLED: ${{ vars.APPLE_CODESIGN_ENABLED || 'false' }}
     steps:
-      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
-        with:
-          fetch-depth: 1
-
       - name: Download artifacts
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
@@ -112,18 +168,6 @@ jobs:
           cd dist
           shasum -a 256 *.tar.gz > checksums.txt
 
-      - name: Install cosign
-        uses: sigstore/cosign-installer@v3.8.1
-
-      - name: Sign checksums (keyless)
-        shell: bash
-        run: |
-          set -euo pipefail
-          cosign sign-blob --yes \
-            --output-signature dist/checksums.txt.sig \
-            --output-certificate dist/checksums.txt.pem \
-            dist/checksums.txt
-
       - name: Publish GitHub Release
         shell: bash
         env:
@@ -132,124 +176,37 @@ jobs:
           set -euo pipefail
           tag="${{ needs.resolve_ref.outputs.release_tag }}"
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" dist/*.tar.gz dist/checksums.txt dist/checksums.txt.sig dist/checksums.txt.pem --clobber
+            gh release upload "$tag" dist/*.tar.gz dist/checksums.txt --clobber
           else
-            gh release create "$tag" dist/*.tar.gz dist/checksums.txt dist/checksums.txt.sig dist/checksums.txt.pem --verify-tag
+            gh release create "$tag" dist/*.tar.gz dist/checksums.txt --verify-tag
           fi
 
-  update_formula:
-    name: update homebrew formula
-    runs-on: ubuntu-24.04
-    needs: [resolve_ref, release]
-    if: startsWith(needs.resolve_ref.outputs.release_tag, 'v')
-    permissions:
-      contents: write
-      pull-requests: write
-      actions: read
-
-    steps:
-      - name: Checkout main branch
-        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
-        with:
-          ref: main
-          fetch-depth: 0
-
-      - name: Download release artifacts
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
-        with:
-          path: dist
-          merge-multiple: true
-
-      - name: Generate checksums
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd dist
-          shasum -a 256 *.tar.gz > checksums.txt
-
-      - name: Update Formula/minishelf.rb
+      - name: Show Homebrew tap update values
         shell: bash
         run: |
           set -euo pipefail
           version="${{ needs.resolve_ref.outputs.version }}"
-          mac_sha="$(awk '/minishelf-'"$version"'-macos-aarch64.tar.gz/{print $1}' dist/checksums.txt)"
-          linux_sha="$(awk '/minishelf-'"$version"'-linux-x86_64.tar.gz/{print $1}' dist/checksums.txt)"
+          archive="minishelf-${version}-aarch64-apple-darwin.tar.gz"
+          sha256="$(awk -v file="$archive" '$2 == file { print $1 }' dist/checksums.txt)"
+          url="https://github.com/${{ github.repository }}/releases/download/v${version}/${archive}"
 
-          if [[ -z "$mac_sha" || -z "$linux_sha" ]]; then
-            echo "Missing checksum(s) for version $version" >&2
+          if [[ -z "$sha256" ]]; then
+            echo "Missing checksum for $archive" >&2
             exit 1
           fi
 
-          python3 - "$version" "$mac_sha" "$linux_sha" <<'PY'
-          from pathlib import Path
-          import re
-          import sys
-
-          version = sys.argv[1]
-          mac_sha = sys.argv[2]
-          linux_sha = sys.argv[3]
-          formula = Path("Formula/minishelf.rb")
-          text = formula.read_text()
-
-          text, n1 = re.subn(
-              r'(?m)^  version "[0-9]+\.[0-9]+\.[0-9]+"$',
-              f'  version "{version}"',
-              text,
-              count=1,
-          )
-          if n1 != 1:
-            raise SystemExit("Failed to update formula version")
-
-          text, n2 = re.subn(
-              r'(on_macos do\s+url "[^"]+"\s+sha256 )"[a-f0-9]{64}"',
-              r'\1"' + mac_sha + '"',
-              text,
-              count=1,
-              flags=re.MULTILINE,
-          )
-          if n2 != 1:
-            raise SystemExit("Failed to update macOS checksum")
-
-          text, n3 = re.subn(
-              r'(on_linux do\s+url "[^"]+"\s+sha256 )"[a-f0-9]{64}"',
-              r'\1"' + linux_sha + '"',
-              text,
-              count=1,
-              flags=re.MULTILINE,
-          )
-          if n3 != 1:
-            raise SystemExit("Failed to update Linux checksum")
-
-          formula.write_text(text)
-          PY
-
-      - name: Commit Formula update and open PR
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          if git diff --quiet -- Formula/minishelf.rb; then
-            echo "Formula already up to date"
-            exit 0
-          fi
-
-          branch="chore/formula-${{ needs.resolve_ref.outputs.release_tag }}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Formula/minishelf.rb
-          git commit -m "Update Homebrew formula for ${{ needs.resolve_ref.outputs.release_tag }}"
-
-          git switch -c "$branch"
-          git push --force-with-lease origin "$branch"
-
-          pr_url="https://github.com/${{ github.repository }}/compare/main...${branch}?expand=1"
-          echo "========================================="
-          echo "🍺 Formula update complete!"
-          echo "👉 Please create a Pull Request here:"
-          echo "   $pr_url"
-          echo "========================================="
-          
-          # Add to job summary so it's visible in the GitHub UI
-          echo "### 🍺 Formula update pushed to branch \`$branch\`" >> $GITHUB_STEP_SUMMARY
-          echo "[👉 Click here to create a Pull Request]($pr_url)" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Homebrew tap manual update"
+            echo
+            echo "Update \\`Formula/minishelf.rb\\` in \\`yourorg/homebrew-tap\\` with:"
+            echo
+            echo "- version: \\`${version}\\`"
+            echo "- url: \\`${url}\\`"
+            echo "- sha256: \\`${sha256}\\`"
+            echo
+            if [[ "${APPLE_CODESIGN_ENABLED}" == "true" ]]; then
+              echo "Signed/notarized archive: yes"
+            else
+              echo "Signed/notarized archive: no"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
