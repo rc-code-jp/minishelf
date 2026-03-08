@@ -172,13 +172,14 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           tag="${{ needs.resolve_ref.outputs.release_tag }}"
-          if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" dist/*.tar.gz dist/checksums.txt --clobber
+          if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/*.tar.gz dist/checksums.txt --clobber --repo "$GH_REPO"
           else
-            gh release create "$tag" dist/*.tar.gz dist/checksums.txt --verify-tag
+            gh release create "$tag" dist/*.tar.gz dist/checksums.txt --verify-tag --repo "$GH_REPO"
           fi
 
       - name: Show Homebrew tap update values
