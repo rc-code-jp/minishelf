@@ -180,6 +180,7 @@ sha256 "<checksums.txt の値>"
 ユーザーはその後 `brew upgrade minishelf` で更新できます。
 
 詳細は [`docs/release.md`](docs/release.md) を参照してください。
+Homebrew tap 更新を GitHub App で自動化する場合は [`docs/github-app-homebrew-tap.md`](docs/github-app-homebrew-tap.md) を参照してください。
 
 ### Homebrew formula テンプレート
 
