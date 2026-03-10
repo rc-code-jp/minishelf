@@ -89,38 +89,40 @@ fn render_preview(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .preview
         .scroll
         .min(app.preview.lines.len().saturating_sub(1));
-    let end = (start + height).min(app.preview.lines.len());
 
-    let mut lines: Vec<Line<'_>> = Vec::with_capacity(end.saturating_sub(start));
-    for (offset, line) in app.preview.lines[start..end].iter().enumerate() {
-        let absolute_index = start + offset;
-        let (style, padded) = match app.preview.kind {
+    let mut lines: Vec<Line<'_>> = Vec::with_capacity(height);
+    let line_no_width = app.preview.lines.len().max(1).to_string().len().max(3);
+    for absolute_index in start..app.preview.lines.len() {
+        if lines.len() >= height {
+            break;
+        }
+
+        let line = &app.preview.lines[absolute_index];
+        match app.preview.kind {
             PreviewKind::Directory => {
                 let entry = &app.preview.directory_entries[absolute_index];
                 let style = style_for_git(app.selected_git_state(&entry.path, entry.is_dir));
                 let padded = format!("{:<width$}", line, width = inner_width);
-                (style, padded)
+                lines.push(Line::from(Span::styled(padded, style)));
             }
             PreviewKind::Text | PreviewKind::Message => {
-                let line_no_width = app.preview.lines.len().max(1).to_string().len().max(3);
                 let style = match app.preview.render_mode {
                     PreviewRenderMode::Diff => {
                         style_for_diff_line(app.preview.is_changed_line(absolute_index))
                     }
                     PreviewRenderMode::Raw => Style::default(),
                 };
-                let sanitized = line.replace('\t', "    ");
-                let numbered = format!(
-                    "{:>line_no_width$} | {}",
-                    absolute_index + 1,
-                    sanitized,
-                    line_no_width = line_no_width
-                );
-                let padded = format!("{:<width$}", numbered, width = inner_width);
-                (style, padded)
+
+                for visual_line in
+                    wrap_numbered_preview_line(absolute_index + 1, line, line_no_width, inner_width)
+                {
+                    if lines.len() >= height {
+                        break;
+                    }
+                    lines.push(Line::from(Span::styled(visual_line, style)));
+                }
             }
-        };
-        lines.push(Line::from(Span::styled(padded, style)));
+        }
     }
 
     let blank = " ".repeat(inner_width);
@@ -137,6 +139,70 @@ fn render_preview(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let preview = Paragraph::new(lines).block(block);
     frame.render_widget(Clear, area);
     frame.render_widget(preview, area);
+}
+
+fn wrap_numbered_preview_line(
+    line_number: usize,
+    line: &str,
+    line_no_width: usize,
+    inner_width: usize,
+) -> Vec<String> {
+    if inner_width == 0 {
+        return Vec::new();
+    }
+
+    let prefix = format!(
+        "{:>line_no_width$} | ",
+        line_number,
+        line_no_width = line_no_width
+    );
+    let continuation_prefix = format!("{:>line_no_width$} | ", "", line_no_width = line_no_width);
+
+    if inner_width <= prefix.len() {
+        return vec![truncate_to_width(&prefix, inner_width)];
+    }
+
+    let content_width = inner_width - prefix.len();
+    let sanitized = line.replace('\t', "    ");
+    let wrapped_content = wrap_text_chunks(&sanitized, content_width);
+    let mut visual_lines = Vec::with_capacity(wrapped_content.len().max(1));
+
+    for (index, chunk) in wrapped_content.iter().enumerate() {
+        let current_prefix = if index == 0 {
+            prefix.as_str()
+        } else {
+            continuation_prefix.as_str()
+        };
+        let combined = format!("{current_prefix}{chunk}");
+        visual_lines.push(format!("{combined:<width$}", width = inner_width));
+    }
+
+    visual_lines
+}
+
+fn wrap_text_chunks(text: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![String::new()];
+    }
+
+    if text.is_empty() {
+        return vec![String::new()];
+    }
+
+    let chars: Vec<char> = text.chars().collect();
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    while start < chars.len() {
+        let end = (start + width).min(chars.len());
+        chunks.push(chars[start..end].iter().collect());
+        start = end;
+    }
+
+    chunks
+}
+
+fn truncate_to_width(text: &str, width: usize) -> String {
+    text.chars().take(width).collect()
 }
 
 fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
@@ -228,4 +294,23 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
         .split(vertical[1]);
 
     horizontal[1]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wrap_numbered_preview_line;
+
+    #[test]
+    fn wrap_numbered_preview_line_keeps_line_number_only_on_first_visual_line() {
+        let lines = wrap_numbered_preview_line(12, "abcdefghijkl", 3, 10);
+
+        assert_eq!(lines, vec![" 12 | abcd", "    | efgh", "    | ijkl"]);
+    }
+
+    #[test]
+    fn wrap_numbered_preview_line_expands_tabs_before_wrapping() {
+        let lines = wrap_numbered_preview_line(1, "\ta", 3, 10);
+
+        assert_eq!(lines, vec!["  1 |     ", "    | a   "]);
+    }
 }
