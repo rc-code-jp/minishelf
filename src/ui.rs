@@ -218,20 +218,19 @@ fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
 
 fn style_for_diff_line(changed: bool) -> Style {
     if !changed {
-        return Style::default().fg(Color::Gray).bg(Color::Rgb(30, 30, 30));
+        return Style::default().fg(Color::DarkGray);
     }
 
     Style::default()
         .fg(Color::Yellow)
-        .bg(Color::Rgb(55, 45, 10))
         .add_modifier(Modifier::BOLD)
 }
 
 fn style_for_git(state: GitState) -> Style {
     match state {
-        GitState::Clean => Style::default().fg(Color::White),
-        GitState::Ignored => Style::default().fg(Color::Rgb(136, 136, 136)),
-        GitState::Untracked => Style::default().fg(Color::Blue),
+        GitState::Clean => Style::default(),
+        GitState::Ignored => Style::default().fg(Color::Gray),
+        GitState::Untracked => Style::default().fg(Color::Cyan),
         GitState::Added => Style::default().fg(Color::Green),
         GitState::Modified => Style::default().fg(Color::Yellow),
         GitState::Deleted => Style::default().fg(Color::Red),
