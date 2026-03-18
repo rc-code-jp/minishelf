@@ -97,7 +97,6 @@ impl Tree {
         self.mode = mode;
         self.changed_paths = collect_existing_changed_paths(git, mode);
         let preferred = self.selected_path().to_path_buf();
-        self.current_dir = self.startup_root.clone();
         self.reload_entries(Some(&preferred))
     }
 
@@ -297,6 +296,30 @@ mod tests {
         tree.expand_selected().expect("expand should work");
         assert_eq!(tree.entries.len(), 1);
         assert_eq!(tree.entries[0].name, "file.txt");
+    }
+
+    #[test]
+    fn set_mode_keeps_current_directory_when_it_is_still_valid() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        let root = tmp.path();
+        let repo = Repository::init(root).expect("git init should succeed");
+        fs::create_dir_all(root.join("src/nested")).expect("dirs should create");
+        fs::write(root.join("src/nested/file.txt"), "v1").expect("file should write");
+        commit_all(&repo, "initial");
+        fs::write(root.join("src/nested/file.txt"), "v2").expect("file should update");
+
+        let git = GitSnapshot::collect(root);
+        let mut tree =
+            Tree::new(root.to_path_buf(), TreeMode::Normal, &git).expect("tree should build");
+        tree.current_dir = root.join("src");
+        tree.refresh().expect("refresh should work");
+
+        tree.set_mode(TreeMode::Changed, &git)
+            .expect("mode switch should work");
+
+        assert_eq!(tree.current_dir, root.join("src"));
+        assert_eq!(tree.entries.len(), 1);
+        assert_eq!(tree.entries[0].name, "nested");
     }
 
     #[test]

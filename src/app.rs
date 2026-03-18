@@ -163,9 +163,7 @@ impl App {
                         if let Err(err) = self.tree.expand_selected() {
                             self.status_message = format!("expand failed: {err}");
                         }
-                        self.refresh_visible_ignored_paths();
-                        self.sync_preview();
-                        self.update_changed_empty_status();
+                        self.sync_tree_state();
                     } else {
                         self.sync_preview();
                         self.focus = FocusPane::Preview;
@@ -177,9 +175,7 @@ impl App {
                     self.focus = FocusPane::Tree;
                 } else {
                     self.tree.collapse_selected();
-                    self.refresh_visible_ignored_paths();
-                    self.sync_preview();
-                    self.update_changed_empty_status();
+                    self.sync_tree_state();
                 }
             }
             Command::PreviewUp => self.preview.scroll_up(1),
@@ -225,9 +221,7 @@ impl App {
             if let Err(err) = self.tree.refresh() {
                 self.status_message = format!("tree refresh failed: {err}");
             } else {
-                self.refresh_visible_ignored_paths();
-                self.sync_preview();
-                self.update_changed_empty_status();
+                self.sync_tree_state();
                 self.request_git_refresh(false);
             }
         }
@@ -239,8 +233,7 @@ impl App {
                     if let Err(err) = self.tree.update_changed_paths(&self.git) {
                         self.status_message = format!("tree refresh failed: {err}");
                     } else {
-                        self.refresh_visible_ignored_paths();
-                        self.sync_preview();
+                        self.sync_tree_state();
                     }
                     self.last_git_refresh = Instant::now();
                     self.git_refresh_in_flight = false;
@@ -292,9 +285,7 @@ impl App {
             return;
         }
 
-        self.refresh_visible_ignored_paths();
-        self.sync_preview();
-        self.update_changed_empty_status();
+        self.sync_tree_state();
         self.request_git_refresh(false);
     }
 
@@ -328,8 +319,7 @@ impl App {
             return;
         }
 
-        self.refresh_visible_ignored_paths();
-        self.sync_preview();
+        self.sync_tree_state();
         self.set_temporary_status(self.tree_mode_status_message());
     }
 
@@ -447,6 +437,12 @@ impl App {
             &self.startup_root,
             self.tree.entries.iter().map(|entry| entry.path.as_path()),
         );
+    }
+
+    fn sync_tree_state(&mut self) {
+        self.refresh_visible_ignored_paths();
+        self.sync_preview();
+        self.update_changed_empty_status();
     }
 
     fn tree_mode_status_message(&self) -> String {
@@ -769,6 +765,30 @@ mod tests {
             .entries
             .iter()
             .any(|entry| entry.name == "clean.txt"));
+    }
+
+    #[test]
+    fn toggle_tree_mode_keeps_current_directory_when_changed_entries_exist() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        let root = tmp.path();
+        let repo = Repository::init(root).expect("git init should succeed");
+        fs::create_dir_all(root.join("src/nested")).expect("dirs should create");
+        fs::write(root.join("src/nested/file.txt"), "v1").expect("file should write");
+        commit_all(&repo, "initial");
+        fs::write(root.join("src/nested/file.txt"), "v2").expect("file should update");
+
+        let mut app = App::new(root.to_path_buf(), TreeMode::Normal).expect("app should build");
+        select_by_file_name(&mut app, "src");
+        let _ = app.handle_command(Command::ExpandOrOpen);
+
+        assert_eq!(app.tree.current_dir, root.join("src"));
+
+        let _ = app.handle_command(Command::ToggleTreeMode);
+
+        assert_eq!(app.tree.mode, TreeMode::Changed);
+        assert_eq!(app.tree.current_dir, root.join("src"));
+        assert_eq!(app.tree.entries.len(), 1);
+        assert_eq!(app.tree.entries[0].name, "nested");
     }
 
     #[test]
