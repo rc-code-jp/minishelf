@@ -11,7 +11,7 @@ use notify::{RecursiveMode, Watcher};
 use crate::config::Config;
 use crate::git_status::{collect_ignored_paths, GitSnapshot, GitState};
 use crate::preview::{PreviewKind, PreviewRenderMode, PreviewState};
-use crate::tree::Tree;
+use crate::tree::{Tree, TreeMode};
 
 const COPY_STATUS_DURATION: Duration = Duration::from_secs(3);
 const FS_REFRESH_DEBOUNCE: Duration = Duration::from_millis(300);
@@ -57,6 +57,7 @@ pub enum Command {
     PreviewDown,
     RefreshGit,
     TogglePreviewMode,
+    ToggleTreeMode,
     ToggleHelp,
     NextChange,
     PrevChange,
@@ -72,11 +73,10 @@ pub enum AppEffect {
 }
 
 impl App {
-    pub fn new(startup_root: PathBuf) -> anyhow::Result<Self> {
+    pub fn new(startup_root: PathBuf, initial_tree_mode: TreeMode) -> anyhow::Result<Self> {
         let config = Config::load();
-        let tree = Tree::new(startup_root.clone())?;
-
         let git = GitSnapshot::collect(&startup_root);
+        let tree = Tree::new(startup_root.clone(), initial_tree_mode, &git)?;
         let visible_ignored_paths = collect_ignored_paths(
             &startup_root,
             tree.entries.iter().map(|entry| entry.path.as_path()),
@@ -100,7 +100,7 @@ impl App {
             })?;
         fs_watcher.watch(&startup_root, RecursiveMode::Recursive)?;
 
-        Ok(Self {
+        let mut app = Self {
             config,
             startup_root,
             tree,
@@ -123,7 +123,9 @@ impl App {
             preferred_preview_mode: None,
             pending_fs_refresh: false,
             last_fs_event_at: None,
-        })
+        };
+        app.update_changed_empty_status();
+        Ok(app)
     }
 
     pub fn handle_command(&mut self, command: Command) -> Option<AppEffect> {
@@ -163,6 +165,7 @@ impl App {
                         }
                         self.refresh_visible_ignored_paths();
                         self.sync_preview();
+                        self.update_changed_empty_status();
                     } else {
                         self.sync_preview();
                         self.focus = FocusPane::Preview;
@@ -176,12 +179,14 @@ impl App {
                     self.tree.collapse_selected();
                     self.refresh_visible_ignored_paths();
                     self.sync_preview();
+                    self.update_changed_empty_status();
                 }
             }
             Command::PreviewUp => self.preview.scroll_up(1),
             Command::PreviewDown => self.preview.scroll_down(1),
             Command::RefreshGit => self.request_git_refresh(true),
             Command::TogglePreviewMode => self.toggle_preview_mode(),
+            Command::ToggleTreeMode => self.toggle_tree_mode(),
             Command::ToggleHelp => self.show_help = true,
             Command::NextChange => self.jump_change(true),
             Command::PrevChange => self.jump_change(false),
@@ -199,6 +204,7 @@ impl App {
             if Instant::now() >= expires_at {
                 self.status_message = String::from("ready");
                 self.status_expires_at = None;
+                self.update_changed_empty_status();
             }
         }
 
@@ -221,6 +227,7 @@ impl App {
             } else {
                 self.refresh_visible_ignored_paths();
                 self.sync_preview();
+                self.update_changed_empty_status();
                 self.request_git_refresh(false);
             }
         }
@@ -229,13 +236,21 @@ impl App {
             match self.git_refresh_rx.try_recv() {
                 Ok(snapshot) => {
                     self.git = snapshot;
+                    if let Err(err) = self.tree.update_changed_paths(&self.git) {
+                        self.status_message = format!("tree refresh failed: {err}");
+                    } else {
+                        self.refresh_visible_ignored_paths();
+                        self.sync_preview();
+                    }
                     self.last_git_refresh = Instant::now();
                     self.git_refresh_in_flight = false;
 
                     if self.pending_manual_refresh {
-                        self.status_message = String::from("git refreshed");
+                        self.status_message = self.refresh_success_message();
                         self.status_expires_at = None;
                         self.pending_manual_refresh = false;
+                    } else {
+                        self.update_changed_empty_status();
                     }
                 }
                 Err(TryRecvError::Empty) => break,
@@ -279,6 +294,7 @@ impl App {
 
         self.refresh_visible_ignored_paths();
         self.sync_preview();
+        self.update_changed_empty_status();
         self.request_git_refresh(false);
     }
 
@@ -299,6 +315,22 @@ impl App {
         self.preferred_preview_mode = Some(next_mode);
         self.sync_preview();
         self.set_temporary_status(format!("preview mode: {}", self.preview.mode_label()));
+    }
+
+    fn toggle_tree_mode(&mut self) {
+        let next_mode = match self.tree.mode {
+            TreeMode::Normal => TreeMode::Changed,
+            TreeMode::Changed => TreeMode::Normal,
+        };
+
+        if let Err(err) = self.tree.set_mode(next_mode, &self.git) {
+            self.set_temporary_status(format!("tree mode switch failed: {err}"));
+            return;
+        }
+
+        self.refresh_visible_ignored_paths();
+        self.sync_preview();
+        self.set_temporary_status(self.tree_mode_status_message());
     }
 
     fn jump_change(&mut self, next: bool) {
@@ -378,6 +410,14 @@ impl App {
         }
     }
 
+    pub fn tree_title(&self) -> String {
+        format!(
+            "Dir: {} [{}]",
+            self.tree.current_dir.display(),
+            self.tree.mode.label()
+        )
+    }
+
     pub fn is_tree_focused(&self) -> bool {
         self.focus == FocusPane::Tree
     }
@@ -407,6 +447,29 @@ impl App {
             &self.startup_root,
             self.tree.entries.iter().map(|entry| entry.path.as_path()),
         );
+    }
+
+    fn tree_mode_status_message(&self) -> String {
+        if self.tree.mode == TreeMode::Changed && self.tree.entries.is_empty() {
+            String::from("tree mode: changed (no files)")
+        } else {
+            format!("tree mode: {}", self.tree.mode.label())
+        }
+    }
+
+    fn refresh_success_message(&self) -> String {
+        if self.tree.mode == TreeMode::Changed && self.tree.entries.is_empty() {
+            String::from("git refreshed | changed tree: no files")
+        } else {
+            String::from("git refreshed")
+        }
+    }
+
+    fn update_changed_empty_status(&mut self) {
+        if self.tree.mode == TreeMode::Changed && self.tree.entries.is_empty() {
+            self.status_message = String::from("changed tree: no files");
+            self.status_expires_at = None;
+        }
     }
 }
 
@@ -460,11 +523,12 @@ mod tests {
 
     use crate::git_status::GitState;
     use crate::preview::PreviewRenderMode;
+    use crate::tree::TreeMode;
 
     use super::{
-        format_relative_with_at, resolve_directory_to_open, AppEffect, FS_REFRESH_DEBOUNCE,
+        format_relative_with_at, resolve_directory_to_open, App, AppEffect, Command,
+        FS_REFRESH_DEBOUNCE,
     };
-    use super::{App, Command};
 
     #[test]
     fn format_relative_file() {
@@ -497,7 +561,8 @@ mod tests {
         commit_all(&repo, "initial");
         fs::write(&file, "line1\nline2\n").expect("write should succeed");
 
-        let mut app = App::new(tmp.path().to_path_buf()).expect("app should build");
+        let mut app =
+            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
         select_by_file_name(&mut app, "file.txt");
         assert_eq!(app.preview.render_mode, PreviewRenderMode::Diff);
 
@@ -511,7 +576,8 @@ mod tests {
     #[test]
     fn help_toggles_and_blocks_navigation_commands() {
         let tmp = tempdir().expect("tmpdir should exist");
-        let mut app = App::new(tmp.path().to_path_buf()).expect("app should build");
+        let mut app =
+            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
         let before = app.tree.selected_path().to_path_buf();
 
         let _ = app.handle_command(Command::ToggleHelp);
@@ -529,7 +595,8 @@ mod tests {
         let tmp = tempdir().expect("tmpdir should exist");
         fs::write(tmp.path().join("note.txt"), "hello").expect("write should succeed");
 
-        let mut app = App::new(tmp.path().to_path_buf()).expect("app should build");
+        let mut app =
+            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
         select_by_file_name(&mut app, "note.txt");
 
         let effect = app.handle_command(Command::OpenInVi);
@@ -544,7 +611,8 @@ mod tests {
         let tmp = tempdir().expect("tmpdir should exist");
         fs::create_dir_all(tmp.path().join("sub")).expect("create dir should succeed");
 
-        let mut app = App::new(tmp.path().to_path_buf()).expect("app should build");
+        let mut app =
+            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
         select_by_file_name(&mut app, "sub");
 
         let effect = app.handle_command(Command::OpenInVi);
@@ -569,7 +637,8 @@ mod tests {
     #[test]
     fn fs_refresh_flushes_after_debounce() {
         let tmp = tempdir().expect("tmpdir should exist");
-        let mut app = App::new(tmp.path().to_path_buf()).expect("app should build");
+        let mut app =
+            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
         app.pending_fs_refresh = true;
         app.last_fs_event_at =
             Some(Instant::now() - FS_REFRESH_DEBOUNCE - Duration::from_millis(1));
@@ -580,7 +649,8 @@ mod tests {
     #[test]
     fn fs_refresh_waits_within_debounce_window() {
         let tmp = tempdir().expect("tmpdir should exist");
-        let mut app = App::new(tmp.path().to_path_buf()).expect("app should build");
+        let mut app =
+            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
         app.pending_fs_refresh = true;
         app.last_fs_event_at = Some(Instant::now());
 
@@ -597,7 +667,7 @@ mod tests {
         fs::create_dir_all(root.join("ignored-dir")).expect("ignored dir should create");
         fs::write(root.join("ignored.txt"), "skip").expect("ignored file should write");
 
-        let app = App::new(root.to_path_buf()).expect("app should build");
+        let app = App::new(root.to_path_buf(), TreeMode::Normal).expect("app should build");
 
         let ignored_dir = root.join("ignored-dir");
         let ignored_file = root.join("ignored.txt");
@@ -616,7 +686,8 @@ mod tests {
         let tmp = tempdir().expect("tmpdir should exist");
         fs::create_dir_all(tmp.path().join("sub")).expect("create dir should succeed");
 
-        let mut app = App::new(tmp.path().to_path_buf()).expect("app should build");
+        let mut app =
+            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
         select_by_file_name(&mut app, "sub");
 
         assert_eq!(app.preview_title(), "Preview (directory)");
@@ -631,7 +702,7 @@ mod tests {
         fs::create_dir_all(root.join("nested")).expect("nested dir should create");
         fs::write(root.join("nested/ignored.log"), "skip").expect("ignored file should write");
 
-        let mut app = App::new(root.to_path_buf()).expect("app should build");
+        let mut app = App::new(root.to_path_buf(), TreeMode::Normal).expect("app should build");
         select_by_file_name(&mut app, "nested");
         let _ = app.handle_command(Command::ExpandOrOpen);
 
@@ -640,6 +711,73 @@ mod tests {
             app.selected_git_state(&ignored_file, false),
             GitState::Ignored
         );
+    }
+
+    #[test]
+    fn changed_tree_mode_can_be_initial_mode() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        let root = tmp.path();
+        let repo = Repository::init(root).expect("git init should succeed");
+        fs::write(root.join("changed.txt"), "v1").expect("file should write");
+        commit_all(&repo, "initial");
+        fs::write(root.join("changed.txt"), "v2").expect("file should update");
+
+        let app = App::new(root.to_path_buf(), TreeMode::Changed).expect("app should build");
+
+        assert_eq!(app.tree.mode, TreeMode::Changed);
+        assert_eq!(app.tree.entries.len(), 1);
+        assert_eq!(app.tree.entries[0].name, "changed.txt");
+    }
+
+    #[test]
+    fn toggle_tree_mode_cycles_normal_and_changed() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        let root = tmp.path();
+        let repo = Repository::init(root).expect("git init should succeed");
+        fs::write(root.join("changed.txt"), "v1").expect("file should write");
+        fs::write(root.join("clean.txt"), "clean").expect("file should write");
+        commit_all(&repo, "initial");
+        fs::write(root.join("changed.txt"), "v2").expect("file should update");
+
+        let mut app = App::new(root.to_path_buf(), TreeMode::Normal).expect("app should build");
+        assert_eq!(app.tree.mode, TreeMode::Normal);
+        assert!(app
+            .tree
+            .entries
+            .iter()
+            .any(|entry| entry.name == "changed.txt"));
+        assert!(app
+            .tree
+            .entries
+            .iter()
+            .any(|entry| entry.name == "clean.txt"));
+
+        let _ = app.handle_command(Command::ToggleTreeMode);
+        assert_eq!(app.tree.mode, TreeMode::Changed);
+        assert_eq!(app.tree.entries.len(), 1);
+        assert_eq!(app.tree.entries[0].name, "changed.txt");
+
+        let _ = app.handle_command(Command::ToggleTreeMode);
+        assert_eq!(app.tree.mode, TreeMode::Normal);
+        assert!(app
+            .tree
+            .entries
+            .iter()
+            .any(|entry| entry.name == "changed.txt"));
+        assert!(app
+            .tree
+            .entries
+            .iter()
+            .any(|entry| entry.name == "clean.txt"));
+    }
+
+    #[test]
+    fn changed_tree_mode_reports_empty_state() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        let app = App::new(tmp.path().to_path_buf(), TreeMode::Changed).expect("app should build");
+
+        assert!(app.tree.entries.is_empty());
+        assert_eq!(app.status_message, "changed tree: no files");
     }
 
     fn select_by_file_name(app: &mut App, file_name: &str) {

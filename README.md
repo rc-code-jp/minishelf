@@ -125,6 +125,8 @@ minishelf .
 - サイズ上限を超えるファイルはプレビューしません。
 - `diff` モードは、ファイル全体を表示しつつ変更行を強調表示します。
 - `diff` モードは、選択中ファイルに Git 差分がある場合のみ有効です。
+- ツリーは `normal` / `changed` モードを持ち、`changed` では変更ファイルとその親ディレクトリのみを表示します。
+- `changed` ツリーでは、作業ツリー上に実体がない deleted ファイルは表示しません。
 
 ---
 
@@ -149,6 +151,25 @@ tree_ratio_preview_focused = 10
 - ドキュメントや設定ファイルをターミナルだけで素早く読みたい
 - チャットや Issue に貼るため、`@path/to/file` 形式でパスをコピーしたい
 - AI エージェントの修正後に、対象ファイルを順に目視チェックしたい
+
+---
+
+## キー操作
+
+- `Tab`: ツリーモード切り替え (`normal` / `changed`)
+- `p`: プレビューモード切り替え (`raw` / `diff`)
+
+---
+
+## 起動オプション
+
+```bash
+minishelf --tree-mode changed
+minishelf --tree-mode normal ~/work/repo
+```
+
+- `--tree-mode normal`: 通常のツリー表示
+- `--tree-mode changed`: Git 差分があるファイルと親ディレクトリだけを表示
 
 ---
 

@@ -24,6 +24,7 @@ use ratatui::Terminal;
 
 use crate::app::{App, AppEffect};
 use crate::input::map_event;
+use crate::tree::TreeMode;
 
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -32,6 +33,9 @@ const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 struct Args {
     /// Startup directory. Defaults to current directory.
     path: Option<PathBuf>,
+    /// Initial tree mode.
+    #[arg(long, value_enum, default_value_t = TreeMode::Normal)]
+    tree_mode: TreeMode,
 }
 
 fn main() -> Result<()> {
@@ -46,7 +50,7 @@ fn main() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let run_result = run(&mut terminal, startup_root);
+    let run_result = run(&mut terminal, startup_root, args.tree_mode);
     let cursor_result = terminal.show_cursor();
 
     match (run_result, cursor_result) {
@@ -56,8 +60,12 @@ fn main() -> Result<()> {
     }
 }
 
-fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, startup_root: PathBuf) -> Result<()> {
-    let mut app = App::new(startup_root)?;
+fn run(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    startup_root: PathBuf,
+    initial_tree_mode: TreeMode,
+) -> Result<()> {
+    let mut app = App::new(startup_root, initial_tree_mode)?;
 
     while !app.should_quit {
         app.poll_background_tasks();

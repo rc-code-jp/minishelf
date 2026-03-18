@@ -84,8 +84,9 @@ fn render_tree(frame: &mut Frame<'_>, app: &App, area: Rect) {
         lines.push(line);
     }
 
-    let title = format!("Dir: {}", app.tree.current_dir.display());
-    let mut block = Block::default().title(title).borders(Borders::ALL);
+    let mut block = Block::default()
+        .title(app.tree_title())
+        .borders(Borders::ALL);
     if app.is_tree_focused() {
         block = block.border_style(Style::default().fg(Color::Cyan));
     }
@@ -262,6 +263,7 @@ fn render_help(frame: &mut Frame<'_>, area: Rect) {
         Line::from("  n / N                  Jump to next / previous change in diff mode"),
         Line::from(""),
         Line::from("General"),
+        Line::from("  Tab                    Toggle tree mode (normal <-> changed)"),
         Line::from("  r                      Refresh git status"),
         Line::from("  c                      Copy @-relative path"),
         Line::from("  v                      Open selected file in vi"),

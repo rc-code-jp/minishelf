@@ -31,6 +31,9 @@ impl GitSnapshot {
             Some(w) => w.to_path_buf(),
             None => return Self::default(),
         };
+        let canonical_workdir = fs::canonicalize(&workdir).unwrap_or(workdir.clone());
+        let canonical_startup_root =
+            fs::canonicalize(startup_root).unwrap_or_else(|_| startup_root.to_path_buf());
 
         let mut options = StatusOptions::new();
         options
@@ -53,14 +56,19 @@ impl GitSnapshot {
             let Some(path) = entry.path() else {
                 continue;
             };
-            let full_path = workdir.join(path);
+            let full_path = canonical_workdir.join(path);
 
-            if !full_path.starts_with(startup_root) {
+            if !full_path.starts_with(&canonical_startup_root) {
                 continue;
             }
 
+            let Ok(relative_to_startup_root) = full_path.strip_prefix(&canonical_startup_root)
+            else {
+                continue;
+            };
+            let display_path = startup_root.join(relative_to_startup_root);
             let state = map_status(status);
-            snapshot.insert_file_state(full_path, state, startup_root);
+            snapshot.insert_file_state(display_path, state, startup_root);
         }
 
         snapshot
@@ -78,6 +86,18 @@ impl GitSnapshot {
                 .copied()
                 .unwrap_or(GitState::Clean)
         }
+    }
+
+    pub fn changed_file_paths(&self) -> Vec<PathBuf> {
+        self.file_states
+            .iter()
+            .filter_map(|(path, state)| match state {
+                GitState::Clean | GitState::Ignored => None,
+                GitState::Untracked | GitState::Added | GitState::Modified | GitState::Deleted => {
+                    Some(path.clone())
+                }
+            })
+            .collect()
     }
 
     fn insert_file_state(&mut self, path: PathBuf, state: GitState, startup_root: &Path) {
