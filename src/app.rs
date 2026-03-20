@@ -314,6 +314,11 @@ impl App {
             return None;
         }
 
+        if self.is_preview_focused() && ui::tree_contains(terminal_area, self, column, row) {
+            self.focus = FocusPane::Tree;
+            return None;
+        }
+
         let tree_area = ui::tree_area(terminal_area, self);
         let Some(index) = ui::tree_index_at(tree_area, self, column, row) else {
             return None;
@@ -968,6 +973,68 @@ mod tests {
         assert_eq!(effect, None);
         assert_eq!(app.tree.selected_path(), before.as_path());
         assert!(app.is_tree_focused());
+    }
+
+    #[test]
+    fn tree_left_click_in_preview_empty_space_returns_focus_to_tree() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        fs::write(tmp.path().join("a.txt"), "a").expect("write should succeed");
+        let mut app =
+            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
+        select_by_file_name(&mut app, "a.txt");
+        let _ = app.handle_command(Command::ExpandOrOpen);
+        let terminal_area = Rect::new(0, 0, 20, 10);
+        let tree_area = ui::tree_area(terminal_area, &app);
+        let before_path = app.tree.selected_path().to_path_buf();
+        let before_scroll = app.preview.scroll;
+
+        let effect = app.handle_tree_left_click(
+            terminal_area,
+            tree_area.right() - 2,
+            tree_area.bottom() - 2,
+        );
+
+        assert_eq!(effect, None);
+        assert!(app.is_tree_focused());
+        assert_eq!(app.tree.selected_path(), before_path.as_path());
+        assert_eq!(app.preview.scroll, before_scroll);
+    }
+
+    #[test]
+    fn tree_left_click_on_border_in_preview_returns_focus_to_tree() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        fs::write(tmp.path().join("a.txt"), "a").expect("write should succeed");
+        let mut app =
+            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
+        select_by_file_name(&mut app, "a.txt");
+        let _ = app.handle_command(Command::ExpandOrOpen);
+        let terminal_area = Rect::new(0, 0, 20, 10);
+        let tree_area = ui::tree_area(terminal_area, &app);
+
+        let effect = app.handle_tree_left_click(terminal_area, tree_area.x, tree_area.y);
+
+        assert_eq!(effect, None);
+        assert!(app.is_tree_focused());
+    }
+
+    #[test]
+    fn tree_left_click_on_item_in_preview_only_returns_focus_to_tree() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        fs::write(tmp.path().join("a.txt"), "a").expect("write should succeed");
+        fs::write(tmp.path().join("b.txt"), "b").expect("write should succeed");
+        let mut app =
+            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
+        select_by_file_name(&mut app, "a.txt");
+        let _ = app.handle_command(Command::ExpandOrOpen);
+        let terminal_area = Rect::new(0, 0, 20, 10);
+        let tree_area = ui::tree_area(terminal_area, &app);
+        let before_path = app.tree.selected_path().to_path_buf();
+
+        let effect = app.handle_tree_left_click(terminal_area, tree_area.x + 1, tree_area.y + 2);
+
+        assert_eq!(effect, None);
+        assert!(app.is_tree_focused());
+        assert_eq!(app.tree.selected_path(), before_path.as_path());
     }
 
     #[test]

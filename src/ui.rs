@@ -39,6 +39,10 @@ pub fn tree_area(area: Rect, app: &App) -> Rect {
     body[0]
 }
 
+pub fn tree_contains(area: Rect, app: &App, column: u16, row: u16) -> bool {
+    tree_area(area, app).contains(ratatui::layout::Position { x: column, y: row })
+}
+
 pub fn tree_scroll_offset(viewport_height: usize, selected_index: usize) -> usize {
     if viewport_height == 0 || selected_index < viewport_height {
         0
@@ -450,6 +454,7 @@ fn render_help(frame: &mut Frame<'_>, area: Rect) {
         Line::from("  h / Left               Collapse dir or move focus back to tree"),
         Line::from("  l / Right / Enter      Expand dir or open file preview"),
         Line::from("  Left click             Same behavior as Right / Enter in tree"),
+        Line::from("                        Preview中は上部ツリー領域クリックでtreeへ戻る"),
         Line::from(""),
         Line::from("Preview"),
         Line::from("  Ctrl+u / Ctrl+d        Half-page preview scroll"),
@@ -509,8 +514,8 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        format_bytes, tree_columns, tree_index_at, tree_scroll_offset, tree_size_text,
-        wrap_numbered_preview_line, DirEntryKind, DirEntryNode,
+        format_bytes, tree_area, tree_columns, tree_contains, tree_index_at, tree_scroll_offset,
+        tree_size_text, wrap_numbered_preview_line, DirEntryKind, DirEntryNode,
     };
     use crate::app::App;
     use crate::tree::TreeMode;
@@ -619,6 +624,20 @@ mod tests {
 
         assert_eq!(tree_index_at(area, &app, 1, 1), Some(1));
         assert_eq!(tree_index_at(area, &app, 1, 2), Some(2));
+    }
+
+    #[test]
+    fn tree_contains_accepts_border_and_empty_space() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        std::fs::write(tmp.path().join("a.txt"), "a").expect("write should succeed");
+        let app = App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
+        let area = Rect::new(0, 0, 20, 10);
+        let tree = tree_area(area, &app);
+
+        assert!(tree_contains(area, &app, tree.x, tree.y));
+        assert!(tree_contains(area, &app, tree.x + 10, tree.y));
+        assert!(tree_contains(area, &app, tree.x + 1, tree.bottom() - 1));
+        assert!(!tree_contains(area, &app, 25, 1));
     }
 
     #[test]
