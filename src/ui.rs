@@ -8,6 +8,11 @@ use crate::app::App;
 use crate::git_status::GitState;
 use crate::preview::PreviewKind;
 use crate::preview::PreviewRenderMode;
+use crate::tree::DirEntryNode;
+
+const TREE_COLUMN_GAP: usize = 2;
+const TREE_DATE_WIDTH: usize = 10;
+const TREE_MIN_NAME_WIDTH: usize = 12;
 
 pub fn render(frame: &mut Frame<'_>, app: &App) {
     let outer = outer_layout(frame.area());
@@ -53,6 +58,7 @@ fn body_layout(area: Rect, app: &App) -> std::rc::Rc<[Rect]> {
 
 fn render_tree(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let viewport_height = area.height.saturating_sub(2) as usize;
+    let inner_width = area.width.saturating_sub(2) as usize;
     let selected_index = app.tree.selected_index();
     let scroll_offset = if viewport_height == 0 || selected_index < viewport_height {
         0
@@ -65,6 +71,7 @@ fn render_tree(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .entries
         .len()
         .min(scroll_offset.saturating_add(viewport_height.max(1)));
+    let columns = tree_columns(inner_width, &app.tree.entries);
 
     let mut lines = Vec::with_capacity(end_index.saturating_sub(scroll_offset));
     for (absolute_index, node) in app.tree.entries[scroll_offset..end_index]
@@ -76,26 +83,12 @@ fn render_tree(frame: &mut Frame<'_>, app: &App, area: Rect) {
         if absolute_index == selected_index {
             style = style.add_modifier(Modifier::REVERSED | Modifier::BOLD);
         }
-
-        let line = if node.is_dir {
-            Line::from(Span::styled(format!("{}/", node.name), style))
-        } else if node.is_symlink {
-            let target_text = std::fs::read_link(&node.path)
-                .map(|t| format!(" → {}", t.display()))
-                .unwrap_or_default();
-            let mut target_style = Style::default().fg(Color::Gray);
-            if absolute_index == selected_index {
-                target_style = target_style.add_modifier(Modifier::REVERSED | Modifier::BOLD);
-            }
-            Line::from(vec![
-                Span::styled(node.name.clone(), style),
-                Span::styled(target_text, target_style),
-            ])
-        } else {
-            Line::from(Span::styled(node.name.clone(), style))
-        };
-
-        lines.push(line);
+        lines.push(render_tree_line(
+            node,
+            &columns,
+            style,
+            absolute_index == selected_index,
+        ));
     }
 
     let mut block = Block::default()
@@ -207,6 +200,138 @@ fn wrap_numbered_preview_line(
     visual_lines
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TreeColumns {
+    name_width: usize,
+    size_width: Option<usize>,
+    date_width: Option<usize>,
+}
+
+fn tree_columns(inner_width: usize, entries: &[DirEntryNode]) -> TreeColumns {
+    if inner_width == 0 {
+        return TreeColumns {
+            name_width: 0,
+            size_width: None,
+            date_width: None,
+        };
+    }
+
+    let size_width = entries
+        .iter()
+        .map(tree_size_text)
+        .map(|text| text.chars().count())
+        .max()
+        .unwrap_or(1);
+    let min_name_width = TREE_MIN_NAME_WIDTH.min(inner_width);
+    let both_required = min_name_width + size_width + TREE_DATE_WIDTH + TREE_COLUMN_GAP * 2;
+    if inner_width >= both_required {
+        return TreeColumns {
+            name_width: inner_width - size_width - TREE_DATE_WIDTH - TREE_COLUMN_GAP * 2,
+            size_width: Some(size_width),
+            date_width: Some(TREE_DATE_WIDTH),
+        };
+    }
+
+    let size_required = min_name_width + size_width + TREE_COLUMN_GAP;
+    if inner_width >= size_required {
+        return TreeColumns {
+            name_width: inner_width - size_width - TREE_COLUMN_GAP,
+            size_width: Some(size_width),
+            date_width: None,
+        };
+    }
+
+    TreeColumns {
+        name_width: inner_width,
+        size_width: None,
+        date_width: None,
+    }
+}
+
+fn render_tree_line(
+    node: &DirEntryNode,
+    columns: &TreeColumns,
+    style: Style,
+    is_selected: bool,
+) -> Line<'static> {
+    let mut spans = Vec::new();
+    let name_text = pad_to_width(
+        &truncate_to_width(&tree_name_text(node), columns.name_width),
+        columns.name_width,
+    );
+    spans.push(Span::styled(name_text, style));
+
+    if let Some(size_width) = columns.size_width {
+        spans.push(Span::styled(" ".repeat(TREE_COLUMN_GAP), style));
+        spans.push(Span::styled(
+            format!("{:>width$}", tree_size_text(node), width = size_width),
+            tree_meta_style(is_selected),
+        ));
+    }
+
+    if let Some(date_width) = columns.date_width {
+        spans.push(Span::styled(" ".repeat(TREE_COLUMN_GAP), style));
+        spans.push(Span::styled(
+            format!(
+                "{:>width$}",
+                node.modified_date.as_deref().unwrap_or(""),
+                width = date_width
+            ),
+            tree_meta_style(is_selected),
+        ));
+    }
+
+    Line::from(spans)
+}
+
+fn tree_name_text(node: &DirEntryNode) -> String {
+    if node.is_dir {
+        return format!("{}/", node.name);
+    }
+
+    if node.is_symlink {
+        let target_text = std::fs::read_link(&node.path)
+            .map(|t| format!(" -> {}", t.display()))
+            .unwrap_or_default();
+        return format!("{}{}", node.name, target_text);
+    }
+
+    node.name.clone()
+}
+
+fn tree_size_text(node: &DirEntryNode) -> String {
+    if node.is_dir {
+        return String::from("-");
+    }
+
+    node.size_bytes.map(format_bytes).unwrap_or_default()
+}
+
+fn format_bytes(size_bytes: u64) -> String {
+    let units = ["B", "K", "M", "G", "T", "P"];
+    let mut value = size_bytes as f64;
+    let mut unit_index = 0;
+    while value >= 1024.0 && unit_index + 1 < units.len() {
+        value /= 1024.0;
+        unit_index += 1;
+    }
+
+    let unit = units[unit_index];
+    if unit_index == 0 || value >= 10.0 {
+        format!("{value:.0}{unit}")
+    } else {
+        format!("{value:.1}{unit}")
+    }
+}
+
+fn tree_meta_style(is_selected: bool) -> Style {
+    let mut style = Style::default().fg(Color::DarkGray);
+    if is_selected {
+        style = style.add_modifier(Modifier::REVERSED | Modifier::BOLD);
+    }
+    style
+}
+
 fn wrap_text_chunks(text: &str, width: usize) -> Vec<String> {
     if width == 0 {
         return vec![String::new()];
@@ -230,6 +355,15 @@ fn wrap_text_chunks(text: &str, width: usize) -> Vec<String> {
 
 fn truncate_to_width(text: &str, width: usize) -> String {
     text.chars().take(width).collect()
+}
+
+fn pad_to_width(text: &str, width: usize) -> String {
+    let len = text.chars().count();
+    if len >= width {
+        return text.to_string();
+    }
+
+    format!("{text}{}", " ".repeat(width - len))
 }
 
 fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
@@ -282,7 +416,7 @@ fn render_help(frame: &mut Frame<'_>, area: Rect) {
         Line::from("  c                      Copy @-relative path"),
         Line::from("  v                      Open selected file in vi"),
         Line::from("  o                      Open selected location in Finder"),
-        Line::from("  q / Esc                Quit"),
+        Line::from("  q / Esc / Ctrl+c       Quit"),
         Line::from("  ? / F1                 Toggle this help"),
         Line::from(""),
         Line::from("Close help: h or ?"),
@@ -325,7 +459,11 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
 
 #[cfg(test)]
 mod tests {
-    use super::wrap_numbered_preview_line;
+    use std::path::PathBuf;
+
+    use super::{
+        format_bytes, tree_columns, tree_size_text, wrap_numbered_preview_line, DirEntryNode,
+    };
 
     #[test]
     fn wrap_numbered_preview_line_keeps_line_number_only_on_first_visual_line() {
@@ -339,5 +477,78 @@ mod tests {
         let lines = wrap_numbered_preview_line(1, "\ta", 3, 10);
 
         assert_eq!(lines, vec!["  1 |     ", "    | a   "]);
+    }
+
+    #[test]
+    fn tree_columns_show_name_size_and_date_when_wide_enough() {
+        let entries = vec![sample_node(
+            "note.txt",
+            false,
+            Some(1_024),
+            Some("2026-03-20"),
+        )];
+        let columns = tree_columns(40, &entries);
+
+        assert_eq!(columns.size_width, Some(4));
+        assert_eq!(columns.date_width, Some(10));
+        assert_eq!(columns.name_width, 22);
+    }
+
+    #[test]
+    fn tree_columns_hide_date_before_size() {
+        let entries = vec![sample_node(
+            "note.txt",
+            false,
+            Some(1_024),
+            Some("2026-03-20"),
+        )];
+        let columns = tree_columns(18, &entries);
+
+        assert_eq!(columns.size_width, Some(4));
+        assert_eq!(columns.date_width, None);
+    }
+
+    #[test]
+    fn tree_columns_hide_all_metadata_when_too_narrow() {
+        let entries = vec![sample_node(
+            "note.txt",
+            false,
+            Some(1_024),
+            Some("2026-03-20"),
+        )];
+        let columns = tree_columns(8, &entries);
+
+        assert_eq!(columns.size_width, None);
+        assert_eq!(columns.date_width, None);
+        assert_eq!(columns.name_width, 8);
+    }
+
+    #[test]
+    fn format_bytes_uses_compact_units() {
+        assert_eq!(format_bytes(812), "812B");
+        assert_eq!(format_bytes(2_048), "2.0K");
+        assert_eq!(format_bytes(10 * 1024 * 1024), "10M");
+    }
+
+    #[test]
+    fn tree_size_text_uses_dash_for_directories() {
+        let dir = sample_node("src", true, None, Some("2026-03-20"));
+        assert_eq!(tree_size_text(&dir), "-");
+    }
+
+    fn sample_node(
+        name: &str,
+        is_dir: bool,
+        size_bytes: Option<u64>,
+        modified_date: Option<&str>,
+    ) -> DirEntryNode {
+        DirEntryNode {
+            path: PathBuf::from(name),
+            name: name.to_string(),
+            is_dir,
+            is_symlink: false,
+            size_bytes,
+            modified_date: modified_date.map(str::to_string),
+        }
     }
 }

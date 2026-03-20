@@ -5,6 +5,7 @@ use crate::app::Command;
 pub fn map_event(key: KeyEvent) -> Option<Command> {
     match (key.code, key.modifiers) {
         (KeyCode::Char('q'), _) => Some(Command::Quit),
+        (KeyCode::Char('c'), KeyModifiers::CONTROL) => Some(Command::Quit),
         (KeyCode::Esc, _) => Some(Command::Quit),
         (KeyCode::Char('k'), _) | (KeyCode::Up, _) => Some(Command::MoveUp),
         (KeyCode::Char('j'), _) | (KeyCode::Down, _) => Some(Command::MoveDown),
@@ -45,6 +46,12 @@ mod tests {
     fn c_maps_to_copy_relative_path() {
         let event = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE);
         assert!(matches!(map_event(event), Some(Command::CopyRelativePath)));
+    }
+
+    #[test]
+    fn ctrl_c_maps_to_quit() {
+        let event = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert!(matches!(map_event(event), Some(Command::Quit)));
     }
 
     #[test]

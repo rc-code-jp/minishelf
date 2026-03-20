@@ -2,6 +2,7 @@ use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::ValueEnum;
 
@@ -28,6 +29,8 @@ pub struct DirEntryNode {
     pub name: String,
     pub is_dir: bool,
     pub is_symlink: bool,
+    pub size_bytes: Option<u64>,
+    pub modified_date: Option<String>,
 }
 
 #[derive(Debug)]
@@ -157,11 +160,14 @@ impl Tree {
                 }
 
                 let name = entry.file_name().to_string_lossy().to_string();
+                let (size_bytes, modified_date) = load_entry_metadata(&entry, is_dir);
                 entries.push(DirEntryNode {
                     path,
                     name,
                     is_dir,
                     is_symlink: file_type.is_symlink(),
+                    size_bytes,
+                    modified_date,
                 });
             }
 
@@ -212,6 +218,39 @@ fn compare_entries(a: &DirEntryNode, b: &DirEntryNode) -> Ordering {
         (false, true) => Ordering::Greater,
         _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
     }
+}
+
+fn load_entry_metadata(entry: &fs::DirEntry, is_dir: bool) -> (Option<u64>, Option<String>) {
+    let metadata = match entry.metadata() {
+        Ok(metadata) => metadata,
+        Err(_) => return (None, None),
+    };
+
+    let size_bytes = if is_dir { None } else { Some(metadata.len()) };
+    let modified_date = metadata.modified().ok().and_then(format_system_time_date);
+    (size_bytes, modified_date)
+}
+
+fn format_system_time_date(time: SystemTime) -> Option<String> {
+    let duration = time.duration_since(UNIX_EPOCH).ok()?;
+    let days = (duration.as_secs() / 86_400) as i64;
+    let (year, month, day) = civil_from_days(days);
+    Some(format!("{year:04}-{month:02}-{day:02}"))
+}
+
+fn civil_from_days(days_since_epoch: i64) -> (i64, i64, i64) {
+    // 依存追加を避けるため、UNIX epoch から西暦日付へ変換する。
+    let z = days_since_epoch + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let day_of_era = z - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
+    let year = era * 400 + year_of_era + if month <= 2 { 1 } else { 0 };
+    (year, month, day)
 }
 
 #[cfg(test)]
@@ -336,6 +375,65 @@ mod tests {
             Tree::new(root.to_path_buf(), TreeMode::Changed, &git).expect("tree should build");
 
         assert!(tree.entries.is_empty());
+    }
+
+    #[test]
+    fn tree_collects_file_size_and_modified_date() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        let root = tmp.path().join("root");
+        fs::create_dir_all(&root).expect("create root should work");
+        fs::write(root.join("note.txt"), "hello").expect("write file should work");
+
+        let tree =
+            Tree::new(root, TreeMode::Normal, &GitSnapshot::default()).expect("tree should build");
+        let file = tree
+            .entries
+            .iter()
+            .find(|entry| entry.name == "note.txt")
+            .expect("note.txt should exist");
+
+        assert_eq!(file.size_bytes, Some(5));
+        assert_eq!(file.modified_date.as_deref().map(str::len), Some(10));
+    }
+
+    #[test]
+    fn tree_uses_empty_size_for_directories() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        let root = tmp.path().join("root");
+        fs::create_dir_all(root.join("sub")).expect("create dir should work");
+
+        let tree =
+            Tree::new(root, TreeMode::Normal, &GitSnapshot::default()).expect("tree should build");
+        let dir = tree
+            .entries
+            .iter()
+            .find(|entry| entry.name == "sub")
+            .expect("sub should exist");
+
+        assert_eq!(dir.size_bytes, None);
+    }
+
+    #[test]
+    fn tree_keeps_broken_symlink_in_entries() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+
+            let tmp = tempdir().expect("tmpdir should exist");
+            let root = tmp.path().join("root");
+            fs::create_dir_all(&root).expect("create root should work");
+            symlink("missing.txt", root.join("broken-link")).expect("symlink should work");
+
+            let tree = Tree::new(root, TreeMode::Normal, &GitSnapshot::default())
+                .expect("tree should build");
+            let link = tree
+                .entries
+                .iter()
+                .find(|entry| entry.name == "broken-link")
+                .expect("broken link should exist");
+
+            assert!(link.is_symlink);
+        }
     }
 
     fn commit_all(repo: &Repository, message: &str) {
