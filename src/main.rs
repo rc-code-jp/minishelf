@@ -69,7 +69,10 @@ fn run(
 
     while !app.should_quit {
         app.poll_background_tasks();
-        terminal.draw(|f| ui::render(f, &app))?;
+        terminal.draw(|f| {
+            app.set_preview_viewport_height(ui::preview_viewport_height(f.area(), &app));
+            ui::render(f, &app);
+        })?;
 
         if event::poll(EVENT_POLL_INTERVAL)? {
             match event::read()? {

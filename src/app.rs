@@ -45,16 +45,19 @@ pub struct App {
     preferred_preview_mode: Option<PreviewRenderMode>,
     pending_fs_refresh: bool,
     last_fs_event_at: Option<Instant>,
+    preview_viewport_height: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub enum Command {
     MoveUp,
     MoveDown,
+    PreviewHalfPageUp,
+    PreviewHalfPageDown,
+    PreviewPageUp,
+    PreviewPageDown,
     ExpandOrOpen,
     Collapse,
-    PreviewUp,
-    PreviewDown,
     RefreshGit,
     TogglePreviewMode,
     ToggleTreeMode,
@@ -123,6 +126,7 @@ impl App {
             preferred_preview_mode: None,
             pending_fs_refresh: false,
             last_fs_event_at: None,
+            preview_viewport_height: 1,
         };
         app.update_changed_empty_status();
         Ok(app)
@@ -178,8 +182,12 @@ impl App {
                     self.sync_tree_state();
                 }
             }
-            Command::PreviewUp => self.preview.scroll_up(1),
-            Command::PreviewDown => self.preview.scroll_down(1),
+            Command::PreviewHalfPageUp => self.preview.scroll_up(self.preview_half_page_amount()),
+            Command::PreviewHalfPageDown => {
+                self.preview.scroll_down(self.preview_half_page_amount())
+            }
+            Command::PreviewPageUp => self.preview.scroll_up(self.preview_page_amount()),
+            Command::PreviewPageDown => self.preview.scroll_down(self.preview_page_amount()),
             Command::RefreshGit => self.request_git_refresh(true),
             Command::TogglePreviewMode => self.toggle_preview_mode(),
             Command::ToggleTreeMode => self.toggle_tree_mode(),
@@ -416,9 +424,21 @@ impl App {
         self.focus == FocusPane::Preview
     }
 
+    pub fn set_preview_viewport_height(&mut self, height: usize) {
+        self.preview_viewport_height = height.max(1);
+    }
+
     fn set_temporary_status(&mut self, msg: impl Into<String>) {
         self.status_message = msg.into();
         self.status_expires_at = Some(Instant::now() + COPY_STATUS_DURATION);
+    }
+
+    fn preview_half_page_amount(&self) -> usize {
+        (self.preview_viewport_height / 2).max(1)
+    }
+
+    fn preview_page_amount(&self) -> usize {
+        self.preview_viewport_height.max(1)
     }
 
     pub fn set_external_status(&mut self, msg: impl Into<String>) {
@@ -567,6 +587,50 @@ mod tests {
 
         let _ = app.handle_command(Command::TogglePreviewMode);
         assert_eq!(app.preview.render_mode, PreviewRenderMode::Diff);
+    }
+
+    #[test]
+    fn preview_half_page_scroll_uses_viewport_height() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        fs::write(
+            tmp.path().join("note.txt"),
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n",
+        )
+        .expect("write should succeed");
+
+        let mut app =
+            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
+        select_by_file_name(&mut app, "note.txt");
+        let _ = app.handle_command(Command::ExpandOrOpen);
+        app.set_preview_viewport_height(6);
+
+        let _ = app.handle_command(Command::PreviewHalfPageDown);
+        assert_eq!(app.preview.scroll, 3);
+
+        let _ = app.handle_command(Command::PreviewHalfPageUp);
+        assert_eq!(app.preview.scroll, 0);
+    }
+
+    #[test]
+    fn preview_page_scroll_uses_viewport_height() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        fs::write(
+            tmp.path().join("note.txt"),
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n",
+        )
+        .expect("write should succeed");
+
+        let mut app =
+            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
+        select_by_file_name(&mut app, "note.txt");
+        let _ = app.handle_command(Command::ExpandOrOpen);
+        app.set_preview_viewport_height(4);
+
+        let _ = app.handle_command(Command::PreviewPageDown);
+        assert_eq!(app.preview.scroll, 4);
+
+        let _ = app.handle_command(Command::PreviewPageUp);
+        assert_eq!(app.preview.scroll, 0);
     }
 
     #[test]

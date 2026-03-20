@@ -10,24 +10,9 @@ use crate::preview::PreviewKind;
 use crate::preview::PreviewRenderMode;
 
 pub fn render(frame: &mut Frame<'_>, app: &App) {
-    let outer = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
-        .split(frame.area());
+    let outer = outer_layout(frame.area());
 
-    let tree_ratio = if app.is_preview_focused() {
-        app.config.layout.tree_ratio_preview_focused
-    } else {
-        app.config.layout.tree_ratio_normal
-    };
-
-    let body = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(tree_ratio),
-            Constraint::Percentage(100 - tree_ratio),
-        ])
-        .split(outer[0]);
+    let body = body_layout(outer[0], app);
 
     render_tree(frame, app, body[0]);
     render_preview(frame, app, body[1]);
@@ -35,6 +20,35 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
     if app.show_help {
         render_help(frame, frame.area());
     }
+}
+
+pub fn preview_viewport_height(area: Rect, app: &App) -> usize {
+    let outer = outer_layout(area);
+    let body = body_layout(outer[0], app);
+    body[1].height.saturating_sub(2) as usize
+}
+
+fn outer_layout(area: Rect) -> std::rc::Rc<[Rect]> {
+    Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(area)
+}
+
+fn body_layout(area: Rect, app: &App) -> std::rc::Rc<[Rect]> {
+    let tree_ratio = if app.is_preview_focused() {
+        app.config.layout.tree_ratio_preview_focused
+    } else {
+        app.config.layout.tree_ratio_normal
+    };
+
+    Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(tree_ratio),
+            Constraint::Percentage(100 - tree_ratio),
+        ])
+        .split(area)
 }
 
 fn render_tree(frame: &mut Frame<'_>, app: &App, area: Rect) {
@@ -257,8 +271,8 @@ fn render_help(frame: &mut Frame<'_>, area: Rect) {
         Line::from("  l / Right / Enter      Expand dir or open file preview"),
         Line::from(""),
         Line::from("Preview"),
-        Line::from("  Ctrl+u / PageUp        Scroll preview up"),
-        Line::from("  Ctrl+d / PageDown      Scroll preview down"),
+        Line::from("  Ctrl+u / Ctrl+d        Half-page preview scroll"),
+        Line::from("  PageUp / PageDown      Full-page preview scroll"),
         Line::from("  p                      Toggle preview mode (raw <-> diff)"),
         Line::from("  n / N                  Jump to next / previous change in diff mode"),
         Line::from(""),
