@@ -79,7 +79,10 @@ fn run(
     while !app.should_quit {
         app.poll_background_tasks();
         terminal.draw(|f| {
-            app.set_preview_viewport_height(ui::preview_viewport_height(f.area(), &app));
+            app.set_preview_viewport_size(
+                ui::preview_viewport_width(f.area(), &app),
+                ui::preview_viewport_height(f.area(), &app),
+            );
             ui::render(f, &app);
         })?;
 
@@ -129,6 +132,20 @@ fn run(
                                 },
                             }
                         }
+                    } else if matches!(mouse_event.kind, MouseEventKind::ScrollUp) {
+                        app.handle_preview_wheel(
+                            terminal_area,
+                            mouse_event.column,
+                            mouse_event.row,
+                            true,
+                        );
+                    } else if matches!(mouse_event.kind, MouseEventKind::ScrollDown) {
+                        app.handle_preview_wheel(
+                            terminal_area,
+                            mouse_event.column,
+                            mouse_event.row,
+                            false,
+                        );
                     } else if matches!(mouse_event.kind, MouseEventKind::Moved) {
                         app.update_tree_hover(terminal_area, mouse_event.column, mouse_event.row);
                     }

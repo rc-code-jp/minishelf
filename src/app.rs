@@ -17,6 +17,7 @@ use crate::ui;
 
 const COPY_STATUS_DURATION: Duration = Duration::from_secs(3);
 const FS_REFRESH_DEBOUNCE: Duration = Duration::from_millis(300);
+const PREVIEW_WHEEL_SCROLL_AMOUNT: usize = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusPane {
@@ -49,6 +50,7 @@ pub struct App {
     pending_fs_refresh: bool,
     last_fs_event_at: Option<Instant>,
     preview_viewport_height: usize,
+    preview_viewport_width: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -131,6 +133,7 @@ impl App {
             pending_fs_refresh: false,
             last_fs_event_at: None,
             preview_viewport_height: 1,
+            preview_viewport_width: 1,
         };
         app.update_changed_empty_status();
         Ok(app)
@@ -156,14 +159,14 @@ impl App {
                     self.tree.move_up();
                     self.sync_preview();
                 }
-                FocusPane::Preview => self.preview.scroll_up(1),
+                FocusPane::Preview => self.scroll_preview_up(1),
             },
             Command::MoveDown => match self.focus {
                 FocusPane::Tree => {
                     self.tree.move_down();
                     self.sync_preview();
                 }
-                FocusPane::Preview => self.preview.scroll_down(1),
+                FocusPane::Preview => self.scroll_preview_down(1),
             },
             Command::ExpandOrOpen => {
                 if self.focus == FocusPane::Tree {
@@ -189,12 +192,12 @@ impl App {
                     self.sync_tree_state();
                 }
             }
-            Command::PreviewHalfPageUp => self.preview.scroll_up(self.preview_half_page_amount()),
+            Command::PreviewHalfPageUp => self.scroll_preview_up(self.preview_half_page_amount()),
             Command::PreviewHalfPageDown => {
-                self.preview.scroll_down(self.preview_half_page_amount())
+                self.scroll_preview_down(self.preview_half_page_amount())
             }
-            Command::PreviewPageUp => self.preview.scroll_up(self.preview_page_amount()),
-            Command::PreviewPageDown => self.preview.scroll_down(self.preview_page_amount()),
+            Command::PreviewPageUp => self.scroll_preview_up(self.preview_page_amount()),
+            Command::PreviewPageDown => self.scroll_preview_down(self.preview_page_amount()),
             Command::RefreshGit => self.request_git_refresh(true),
             Command::TogglePreviewMode => self.toggle_preview_mode(),
             Command::ToggleTreeMode => self.toggle_tree_mode(),
@@ -342,12 +345,31 @@ impl App {
         self.hovered_tree_index = ui::tree_index_at(tree_area, self, column, row);
     }
 
+    pub fn handle_preview_wheel(
+        &mut self,
+        terminal_area: Rect,
+        column: u16,
+        row: u16,
+        scroll_up: bool,
+    ) {
+        if self.show_help || !ui::preview_contains(terminal_area, self, column, row) {
+            return;
+        }
+
+        if scroll_up {
+            self.scroll_preview_up(PREVIEW_WHEEL_SCROLL_AMOUNT);
+        } else {
+            self.scroll_preview_down(PREVIEW_WHEEL_SCROLL_AMOUNT);
+        }
+    }
+
     fn sync_preview(&mut self) {
         self.preview = PreviewState::from_path(
             &self.startup_root,
             self.tree.selected_path(),
             self.preferred_preview_mode,
         );
+        self.clamp_preview_scroll();
     }
 
     fn toggle_preview_mode(&mut self) {
@@ -382,6 +404,8 @@ impl App {
         } else {
             self.preview.jump_to_prev_change()
         };
+
+        self.clamp_preview_scroll();
 
         if !moved {
             self.set_temporary_status("no change marker in current view");
@@ -469,8 +493,10 @@ impl App {
         self.focus == FocusPane::Preview
     }
 
-    pub fn set_preview_viewport_height(&mut self, height: usize) {
+    pub fn set_preview_viewport_size(&mut self, width: usize, height: usize) {
+        self.preview_viewport_width = width.max(1);
         self.preview_viewport_height = height.max(1);
+        self.clamp_preview_scroll();
     }
 
     fn set_temporary_status(&mut self, msg: impl Into<String>) {
@@ -484,6 +510,25 @@ impl App {
 
     fn preview_page_amount(&self) -> usize {
         self.preview_viewport_height.max(1)
+    }
+
+    fn scroll_preview_up(&mut self, amount: usize) {
+        self.preview.scroll_up(amount);
+        self.clamp_preview_scroll();
+    }
+
+    fn scroll_preview_down(&mut self, amount: usize) {
+        self.preview.scroll_down(amount);
+        self.clamp_preview_scroll();
+    }
+
+    fn clamp_preview_scroll(&mut self) {
+        let max_scroll = ui::preview_max_scroll(
+            &self.preview,
+            self.preview_viewport_height,
+            self.preview_viewport_width,
+        );
+        self.preview.scroll = self.preview.scroll.min(max_scroll);
     }
 
     pub fn set_external_status(&mut self, msg: impl Into<String>) {
@@ -652,7 +697,7 @@ mod tests {
             App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
         select_by_file_name(&mut app, "note.txt");
         let _ = app.handle_command(Command::ExpandOrOpen);
-        app.set_preview_viewport_height(6);
+        app.set_preview_viewport_size(20, 6);
 
         let _ = app.handle_command(Command::PreviewHalfPageDown);
         assert_eq!(app.preview.scroll, 3);
@@ -674,13 +719,152 @@ mod tests {
             App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
         select_by_file_name(&mut app, "note.txt");
         let _ = app.handle_command(Command::ExpandOrOpen);
-        app.set_preview_viewport_height(4);
+        app.set_preview_viewport_size(20, 4);
 
         let _ = app.handle_command(Command::PreviewPageDown);
         assert_eq!(app.preview.scroll, 4);
 
         let _ = app.handle_command(Command::PreviewPageUp);
         assert_eq!(app.preview.scroll, 0);
+    }
+
+    #[test]
+    fn preview_wheel_scrolls_down_by_three_lines() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        fs::write(
+            tmp.path().join("note.txt"),
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n",
+        )
+        .expect("write should succeed");
+
+        let mut app =
+            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
+        select_by_file_name(&mut app, "note.txt");
+        let _ = app.handle_command(Command::ExpandOrOpen);
+        app.set_preview_viewport_size(20, 4);
+        let terminal_area = Rect::new(0, 0, 20, 10);
+        let preview_area = ui::preview_area(terminal_area, &app);
+
+        app.handle_preview_wheel(terminal_area, preview_area.x + 1, preview_area.y + 1, false);
+
+        assert_eq!(app.preview.scroll, 3);
+        assert!(app.is_preview_focused());
+    }
+
+    #[test]
+    fn preview_wheel_scrolls_up_and_clamps_at_zero() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        fs::write(
+            tmp.path().join("note.txt"),
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n",
+        )
+        .expect("write should succeed");
+
+        let mut app =
+            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
+        select_by_file_name(&mut app, "note.txt");
+        let _ = app.handle_command(Command::ExpandOrOpen);
+        app.set_preview_viewport_size(20, 4);
+        app.preview.scroll = 2;
+        let terminal_area = Rect::new(0, 0, 20, 10);
+        let preview_area = ui::preview_area(terminal_area, &app);
+
+        app.handle_preview_wheel(terminal_area, preview_area.x + 1, preview_area.y + 1, true);
+
+        assert_eq!(app.preview.scroll, 0);
+        assert!(app.is_preview_focused());
+    }
+
+    #[test]
+    fn preview_wheel_ignores_non_preview_region() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        fs::write(
+            tmp.path().join("note.txt"),
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n",
+        )
+        .expect("write should succeed");
+
+        let mut app =
+            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
+        select_by_file_name(&mut app, "note.txt");
+        let _ = app.handle_command(Command::ExpandOrOpen);
+        app.set_preview_viewport_size(20, 4);
+        let before_focus = app.focus;
+        let terminal_area = Rect::new(0, 0, 20, 10);
+
+        app.handle_preview_wheel(terminal_area, 1, 1, false);
+
+        assert_eq!(app.preview.scroll, 0);
+        assert_eq!(app.focus, before_focus);
+    }
+
+    #[test]
+    fn preview_wheel_ignores_help_mode() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        fs::write(
+            tmp.path().join("note.txt"),
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n",
+        )
+        .expect("write should succeed");
+
+        let mut app =
+            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
+        select_by_file_name(&mut app, "note.txt");
+        let _ = app.handle_command(Command::ExpandOrOpen);
+        app.set_preview_viewport_size(20, 4);
+        app.show_help = true;
+        let terminal_area = Rect::new(0, 0, 20, 10);
+        let preview_area = ui::preview_area(terminal_area, &app);
+
+        app.handle_preview_wheel(terminal_area, preview_area.x + 1, preview_area.y + 1, false);
+
+        assert_eq!(app.preview.scroll, 0);
+    }
+
+    #[test]
+    fn preview_page_down_stops_at_last_full_page() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        fs::write(
+            tmp.path().join("note.txt"),
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n",
+        )
+        .expect("write should succeed");
+
+        let mut app =
+            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
+        select_by_file_name(&mut app, "note.txt");
+        let _ = app.handle_command(Command::ExpandOrOpen);
+        app.set_preview_viewport_size(20, 4);
+
+        for _ in 0..5 {
+            let _ = app.handle_command(Command::PreviewPageDown);
+        }
+
+        assert_eq!(app.preview.scroll, 6);
+    }
+
+    #[test]
+    fn preview_wheel_down_stops_at_last_full_page() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        fs::write(
+            tmp.path().join("note.txt"),
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n",
+        )
+        .expect("write should succeed");
+
+        let mut app =
+            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
+        select_by_file_name(&mut app, "note.txt");
+        let _ = app.handle_command(Command::ExpandOrOpen);
+        app.set_preview_viewport_size(20, 4);
+        let terminal_area = Rect::new(0, 0, 20, 10);
+        let preview_area = ui::preview_area(terminal_area, &app);
+
+        for _ in 0..5 {
+            app.handle_preview_wheel(terminal_area, preview_area.x + 1, preview_area.y + 1, false);
+        }
+
+        assert_eq!(app.preview.scroll, 6);
     }
 
     #[test]

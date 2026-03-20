@@ -8,6 +8,7 @@ use crate::app::App;
 use crate::git_status::GitState;
 use crate::preview::PreviewKind;
 use crate::preview::PreviewRenderMode;
+use crate::preview::PreviewState;
 use crate::tree::{DirEntryKind, DirEntryNode};
 
 const TREE_COLUMN_GAP: usize = 2;
@@ -33,6 +34,18 @@ pub fn preview_viewport_height(area: Rect, app: &App) -> usize {
     body[1].height.saturating_sub(2) as usize
 }
 
+pub fn preview_viewport_width(area: Rect, app: &App) -> usize {
+    let outer = outer_layout(area);
+    let body = body_layout(outer[0], app);
+    body[1].width.saturating_sub(2) as usize
+}
+
+pub fn preview_area(area: Rect, app: &App) -> Rect {
+    let outer = outer_layout(area);
+    let body = body_layout(outer[0], app);
+    body[1]
+}
+
 pub fn tree_area(area: Rect, app: &App) -> Rect {
     let outer = outer_layout(area);
     let body = body_layout(outer[0], app);
@@ -41,6 +54,45 @@ pub fn tree_area(area: Rect, app: &App) -> Rect {
 
 pub fn tree_contains(area: Rect, app: &App, column: u16, row: u16) -> bool {
     tree_area(area, app).contains(ratatui::layout::Position { x: column, y: row })
+}
+
+pub fn preview_contains(area: Rect, app: &App, column: u16, row: u16) -> bool {
+    preview_area(area, app).contains(ratatui::layout::Position { x: column, y: row })
+}
+
+pub fn preview_max_scroll(
+    preview: &PreviewState,
+    viewport_height: usize,
+    inner_width: usize,
+) -> usize {
+    if viewport_height == 0 || inner_width == 0 || preview.lines.is_empty() {
+        return 0;
+    }
+
+    let visual_line_counts: Vec<usize> = match preview.kind {
+        PreviewKind::Directory => vec![1; preview.lines.len()],
+        PreviewKind::Text | PreviewKind::Message => {
+            let line_no_width = preview.lines.len().max(1).to_string().len().max(3);
+            preview
+                .lines
+                .iter()
+                .enumerate()
+                .map(|(index, line)| {
+                    preview_visual_line_count(index + 1, line, line_no_width, inner_width)
+                })
+                .collect()
+        }
+    };
+
+    let mut visual_lines_from_end = 0usize;
+    for (index, count) in visual_line_counts.iter().enumerate().rev() {
+        visual_lines_from_end = visual_lines_from_end.saturating_add(*count);
+        if visual_lines_from_end >= viewport_height {
+            return index;
+        }
+    }
+
+    0
 }
 
 pub fn tree_scroll_offset(viewport_height: usize, selected_index: usize) -> usize {
@@ -240,6 +292,17 @@ fn wrap_numbered_preview_line(
     }
 
     visual_lines
+}
+
+fn preview_visual_line_count(
+    line_number: usize,
+    line: &str,
+    line_no_width: usize,
+    inner_width: usize,
+) -> usize {
+    wrap_numbered_preview_line(line_number, line, line_no_width, inner_width)
+        .len()
+        .max(1)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -459,6 +522,7 @@ fn render_help(frame: &mut Frame<'_>, area: Rect) {
         Line::from("Preview"),
         Line::from("  Ctrl+u / Ctrl+d        Half-page preview scroll"),
         Line::from("  PageUp / PageDown      Full-page preview scroll"),
+        Line::from("  Mouse wheel on preview Scroll preview by 3 lines"),
         Line::from("  p                      Toggle preview mode (raw <-> diff)"),
         Line::from("  n / N                  Jump to next / previous change in diff mode"),
         Line::from(""),
@@ -514,8 +578,9 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        format_bytes, tree_area, tree_columns, tree_contains, tree_index_at, tree_scroll_offset,
-        tree_size_text, wrap_numbered_preview_line, DirEntryKind, DirEntryNode,
+        format_bytes, preview_area, preview_contains, preview_max_scroll, tree_area, tree_columns,
+        tree_contains, tree_index_at, tree_scroll_offset, tree_size_text,
+        wrap_numbered_preview_line, DirEntryKind, DirEntryNode,
     };
     use crate::app::App;
     use crate::tree::TreeMode;
@@ -638,6 +703,42 @@ mod tests {
         assert!(tree_contains(area, &app, tree.x + 10, tree.y));
         assert!(tree_contains(area, &app, tree.x + 1, tree.bottom() - 1));
         assert!(!tree_contains(area, &app, 25, 1));
+    }
+
+    #[test]
+    fn preview_contains_accepts_preview_region_only() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        std::fs::write(tmp.path().join("a.txt"), "a").expect("write should succeed");
+        let mut app =
+            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
+        app.focus = crate::app::FocusPane::Preview;
+        let area = Rect::new(0, 0, 20, 10);
+        let preview = preview_area(area, &app);
+
+        assert!(preview_contains(area, &app, preview.x, preview.y));
+        assert!(preview_contains(
+            area,
+            &app,
+            preview.x + 1,
+            preview.bottom() - 1
+        ));
+        assert!(!preview_contains(area, &app, 1, 1));
+    }
+
+    #[test]
+    fn preview_max_scroll_stops_at_last_full_text_page() {
+        let mut preview = crate::preview::PreviewState::message("placeholder");
+        preview.lines = vec!["1".into(), "2".into(), "3".into(), "4".into()];
+
+        assert_eq!(preview_max_scroll(&preview, 3, 20), 1);
+    }
+
+    #[test]
+    fn preview_max_scroll_accounts_for_wrapped_lines() {
+        let mut preview = crate::preview::PreviewState::message("placeholder");
+        preview.lines = vec!["z".into(), "abcdefghijkl".into()];
+
+        assert_eq!(preview_max_scroll(&preview, 2, 10), 1);
     }
 
     #[test]
