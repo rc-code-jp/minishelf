@@ -244,27 +244,27 @@ jobs:
 
           app_jwt="$(
             APP_ID="$APP_ID" APP_PRIVATE_KEY="$APP_PRIVATE_KEY" ruby <<'RUBY'
-            require "base64"
-            require "json"
-            require "openssl"
+          require "base64"
+          require "json"
+          require "openssl"
 
-            def base64url(data)
-              Base64.urlsafe_encode64(data, padding: false)
-            end
+          def base64url(data)
+            Base64.urlsafe_encode64(data, padding: false)
+          end
 
-            now = Time.now.to_i
-            header = { alg: "RS256", typ: "JWT" }
-            payload = {
-              iat: now - 60,
-              exp: now + 540,
-              iss: ENV.fetch("APP_ID"),
-            }
+          now = Time.now.to_i
+          header = { alg: "RS256", typ: "JWT" }
+          payload = {
+            iat: now - 60,
+            exp: now + 540,
+            iss: ENV.fetch("APP_ID"),
+          }
 
-            private_key = OpenSSL::PKey::RSA.new(ENV.fetch("APP_PRIVATE_KEY"))
-            signing_input = [header, payload].map { |part| base64url(JSON.generate(part)) }.join(".")
-            signature = private_key.sign(OpenSSL::Digest::SHA256.new, signing_input)
-            puts [signing_input, base64url(signature)].join(".")
-            RUBY
+          private_key = OpenSSL::PKey::RSA.new(ENV.fetch("APP_PRIVATE_KEY"))
+          signing_input = [header, payload].map { |part| base64url(JSON.generate(part)) }.join(".")
+          signature = private_key.sign(OpenSSL::Digest::SHA256.new, signing_input)
+          puts [signing_input, base64url(signature)].join(".")
+          RUBY
           )"
 
           installation_response="$(
@@ -278,9 +278,9 @@ jobs:
 
           installation_id="$(
             INSTALLATION_RESPONSE="$installation_response" ruby <<'RUBY'
-            require "json"
-            puts JSON.parse(ENV.fetch("INSTALLATION_RESPONSE")).fetch("id")
-            RUBY
+          require "json"
+          puts JSON.parse(ENV.fetch("INSTALLATION_RESPONSE")).fetch("id")
+          RUBY
           )"
 
           token_response="$(
@@ -296,9 +296,9 @@ jobs:
 
           token="$(
             TOKEN_RESPONSE="$token_response" ruby <<'RUBY'
-            require "json"
-            puts JSON.parse(ENV.fetch("TOKEN_RESPONSE")).fetch("token")
-            RUBY
+          require "json"
+          puts JSON.parse(ENV.fetch("TOKEN_RESPONSE")).fetch("token")
+          RUBY
           )"
 
           echo "::add-mask::${token}"

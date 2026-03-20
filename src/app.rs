@@ -323,9 +323,7 @@ impl App {
         }
 
         let tree_area = ui::tree_area(terminal_area, self);
-        let Some(index) = ui::tree_index_at(tree_area, self, column, row) else {
-            return None;
-        };
+        let index = ui::tree_index_at(tree_area, self, column, row)?;
 
         if !self.tree.select_index(index) {
             return None;

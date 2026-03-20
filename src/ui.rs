@@ -142,14 +142,23 @@ fn body_layout(area: Rect, app: &App) -> std::rc::Rc<[Rect]> {
     } else {
         app.config.layout.tree_ratio_normal
     };
+    let min_pane_height = if area.height >= 6 { 3 } else { 1 };
+    let max_tree_height = area.height.saturating_sub(min_pane_height);
+    let mut tree_height = ((u32::from(area.height) * u32::from(tree_ratio)) / 100) as u16;
 
-    Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(tree_ratio),
-            Constraint::Percentage(100 - tree_ratio),
-        ])
-        .split(area)
+    tree_height = tree_height.clamp(min_pane_height, max_tree_height);
+    let preview_height = area.height.saturating_sub(tree_height);
+
+    vec![
+        Rect::new(area.x, area.y, area.width, tree_height),
+        Rect::new(
+            area.x,
+            area.y.saturating_add(tree_height),
+            area.width,
+            preview_height,
+        ),
+    ]
+    .into()
 }
 
 fn render_tree(frame: &mut Frame<'_>, app: &App, area: Rect) {
