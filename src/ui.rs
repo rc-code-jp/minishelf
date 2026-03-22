@@ -5,6 +5,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::app::App;
+use crate::config::HelpLanguage;
 use crate::git_status::GitState;
 use crate::preview::PreviewKind;
 use crate::preview::PreviewRenderMode;
@@ -23,8 +24,8 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
     render_tree(frame, app, body[0]);
     render_preview(frame, app, body[1]);
     render_status(frame, app, outer[1]);
-    if app.show_help {
-        render_help(frame, frame.area());
+    if app.help.visible {
+        render_help(frame, app, frame.area());
     }
 }
 
@@ -46,6 +47,10 @@ pub fn preview_area(area: Rect, app: &App) -> Rect {
     body[1]
 }
 
+pub fn help_area(area: Rect) -> Rect {
+    centered_rect(76, 80, area)
+}
+
 pub fn tree_area(area: Rect, app: &App) -> Rect {
     let outer = outer_layout(area);
     let body = body_layout(outer[0], app);
@@ -58,6 +63,18 @@ pub fn tree_contains(area: Rect, app: &App, column: u16, row: u16) -> bool {
 
 pub fn preview_contains(area: Rect, app: &App, column: u16, row: u16) -> bool {
     preview_area(area, app).contains(ratatui::layout::Position { x: column, y: row })
+}
+
+pub fn help_contains(area: Rect, column: u16, row: u16) -> bool {
+    help_area(area).contains(ratatui::layout::Position { x: column, y: row })
+}
+
+pub fn help_viewport_height(area: Rect) -> usize {
+    help_area(area).height.saturating_sub(2) as usize
+}
+
+pub fn help_viewport_width(area: Rect) -> usize {
+    help_area(area).width.saturating_sub(2) as usize
 }
 
 pub fn preview_max_scroll(
@@ -489,7 +506,11 @@ fn pad_to_width(text: &str, width: usize) -> String {
 }
 
 fn render_status(frame: &mut Frame<'_>, app: &App, area: Rect) {
-    let status_text = format!("{} | ?: help", app.status_message);
+    let help_label = match app.help.language {
+        HelpLanguage::En => "?: help",
+        HelpLanguage::Ja => "?: ヘルプ",
+    };
+    let status_text = format!("{} | {}", app.status_message, help_label);
     let line = Line::from(Span::styled(
         status_text,
         Style::default().fg(Color::DarkGray),
@@ -518,43 +539,164 @@ fn style_for_git(state: GitState) -> Style {
     }
 }
 
-fn render_help(frame: &mut Frame<'_>, area: Rect) {
-    let popup = centered_rect(76, 80, area);
-    let help_lines = vec![
-        Line::from("Navigation"),
-        Line::from("  j / k, Down / Up      Move selection or preview scroll"),
-        Line::from("  h / Left               Collapse dir or move focus back to tree"),
-        Line::from("  l / Right / Enter      Expand dir or open file preview"),
-        Line::from("  Left click             Same behavior as Right / Enter in tree"),
-        Line::from("                        Preview中は上部ツリー領域クリックでtreeへ戻る"),
-        Line::from(""),
-        Line::from("Preview"),
-        Line::from("  Ctrl+u / Ctrl+d        Half-page preview scroll"),
-        Line::from("  PageUp / PageDown      Full-page preview scroll"),
-        Line::from("  Mouse wheel on preview Scroll preview by 3 lines"),
-        Line::from("  p                      Toggle preview mode (raw <-> diff)"),
-        Line::from("  n / N                  Jump to next / previous change in diff mode"),
-        Line::from(""),
-        Line::from("General"),
-        Line::from("  Tab                    Toggle tree mode (normal <-> changed)"),
-        Line::from("  r                      Refresh git status"),
-        Line::from("  c                      Copy @-relative path"),
-        Line::from("  v                      Open selected file in vi"),
-        Line::from("  o                      Open selected location in Finder"),
-        Line::from("  q / Esc / Ctrl+c       Quit"),
-        Line::from("  ? / F1                 Toggle this help"),
-        Line::from(""),
-        Line::from("Close help: h or ?"),
-    ];
+fn help_section(title: &str) -> Vec<Line<'static>> {
+    vec![Line::from(title.to_string())]
+}
+
+fn help_entry(keys: &str, description: &str) -> Vec<Line<'static>> {
+    vec![
+        Line::from(vec![Span::styled(
+            format!("  {keys}"),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(format!("    {description}")),
+    ]
+}
+
+fn help_blank() -> Vec<Line<'static>> {
+    vec![Line::from("")]
+}
+
+fn help_content(language: HelpLanguage) -> (&'static str, Vec<Line<'static>>) {
+    match language {
+        HelpLanguage::En => {
+            let mut lines = Vec::new();
+            lines.extend(help_section("Navigation"));
+            lines.extend(help_entry(
+                "j / k, Down / Up",
+                "Move selection or scroll preview",
+            ));
+            lines.extend(help_entry(
+                "h / Left",
+                "Collapse dir or move focus back to tree",
+            ));
+            lines.extend(help_entry(
+                "l / Right / Enter",
+                "Expand dir or open file preview",
+            ));
+            lines.extend(help_entry(
+                "Left click",
+                "Same as Right / Enter in the tree",
+            ));
+            lines.extend(help_entry(
+                "Top tree area click",
+                "Click from preview to focus tree",
+            ));
+            lines.extend(help_blank());
+            lines.extend(help_section("Preview"));
+            lines.extend(help_entry("Ctrl+u / Ctrl+d", "Half-page preview scroll"));
+            lines.extend(help_entry("PageUp / PageDown", "Full-page preview scroll"));
+            lines.extend(help_entry(
+                "Mouse wheel on preview",
+                "Scroll preview by 3 lines",
+            ));
+            lines.extend(help_entry("p", "Toggle preview mode (raw <-> diff)"));
+            lines.extend(help_entry(
+                "n / N",
+                "Jump to next / previous change in diff mode",
+            ));
+            lines.extend(help_blank());
+            lines.extend(help_section("General"));
+            lines.extend(help_entry("Tab", "Toggle tree mode (normal <-> changed)"));
+            lines.extend(help_entry("r", "Refresh git status"));
+            lines.extend(help_entry("c", "Copy @-relative path"));
+            lines.extend(help_entry("v", "Open selected file in vi"));
+            lines.extend(help_entry("o", "Open selected location in Finder"));
+            lines.extend(help_entry("t", "Switch help language (English <-> 日本語)"));
+            lines.extend(help_entry("q / Esc / Ctrl+c", "Quit"));
+            lines.extend(help_entry("? / F1", "Toggle this help"));
+            lines.extend(help_blank());
+            lines.extend(help_section("Close help"));
+            lines.extend(help_entry("h or ?", "Close this modal"));
+            ("Help", lines)
+        }
+        HelpLanguage::Ja => {
+            let mut lines = Vec::new();
+            lines.extend(help_section("ナビゲーション"));
+            lines.extend(help_entry(
+                "j / k, Down / Up",
+                "選択を移動、またはプレビューをスクロール",
+            ));
+            lines.extend(help_entry(
+                "h / Left",
+                "ディレクトリを閉じる、またはツリーへ戻る",
+            ));
+            lines.extend(help_entry(
+                "l / Right / Enter",
+                "ディレクトリを開く、またはファイルをプレビュー",
+            ));
+            lines.extend(help_entry(
+                "左クリック",
+                "ツリーでは Right / Enter と同じ動作",
+            ));
+            lines.extend(help_entry(
+                "上部ツリー領域をクリック",
+                "プレビュー中にツリーへ戻る",
+            ));
+            lines.extend(help_blank());
+            lines.extend(help_section("プレビュー"));
+            lines.extend(help_entry("Ctrl+u / Ctrl+d", "半ページ分スクロール"));
+            lines.extend(help_entry("PageUp / PageDown", "1ページ分スクロール"));
+            lines.extend(help_entry(
+                "プレビュー上のマウスホイール",
+                "3行ずつスクロール",
+            ));
+            lines.extend(help_entry("p", "表示モード切り替え (raw <-> diff)"));
+            lines.extend(help_entry("n / N", "diff モードで次 / 前の変更へ移動"));
+            lines.extend(help_blank());
+            lines.extend(help_section("一般"));
+            lines.extend(help_entry(
+                "Tab",
+                "ツリーモード切り替え (normal <-> changed)",
+            ));
+            lines.extend(help_entry("r", "Git ステータス更新"));
+            lines.extend(help_entry("c", "@ 付き相対パスをコピー"));
+            lines.extend(help_entry("v", "選択ファイルを vi で開く"));
+            lines.extend(help_entry("o", "選択位置を Finder で開く"));
+            lines.extend(help_entry("t", "ヘルプ言語を切り替え (English <-> 日本語)"));
+            lines.extend(help_entry("q / Esc / Ctrl+c", "終了"));
+            lines.extend(help_entry("? / F1", "このヘルプを表示"));
+            lines.extend(help_blank());
+            lines.extend(help_section("ヘルプを閉じる"));
+            lines.extend(help_entry("h または ?", "このモーダルを閉じる"));
+            ("ヘルプ", lines)
+        }
+    }
+}
+
+pub fn help_max_scroll(
+    language: HelpLanguage,
+    viewport_height: usize,
+    inner_width: usize,
+) -> usize {
+    if viewport_height == 0 || inner_width == 0 {
+        return 0;
+    }
+
+    let (_, lines) = help_content(language);
+    let visual_line_count = lines
+        .iter()
+        .map(|line| line.width().max(1).div_ceil(inner_width))
+        .sum::<usize>();
+
+    visual_line_count.saturating_sub(viewport_height)
+}
+
+fn render_help(frame: &mut Frame<'_>, app: &App, area: Rect) {
+    let popup = help_area(area);
+    let (title, help_lines) = help_content(app.help.language);
 
     let block = Block::default()
-        .title("Help")
+        .title(title)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(help_lines)
             .block(block)
+            .scroll((app.help.scroll as u16, 0))
             .wrap(Wrap { trim: false }),
         popup,
     );
@@ -587,13 +729,17 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        format_bytes, preview_area, preview_contains, preview_max_scroll, tree_area, tree_columns,
-        tree_contains, tree_index_at, tree_scroll_offset, tree_size_text,
-        wrap_numbered_preview_line, DirEntryKind, DirEntryNode,
+        format_bytes, help_entry, help_max_scroll, preview_area, preview_contains,
+        preview_max_scroll, tree_area, tree_columns, tree_contains, tree_index_at,
+        tree_scroll_offset, tree_size_text, wrap_numbered_preview_line, DirEntryKind, DirEntryNode,
     };
     use crate::app::App;
+    use crate::config::HelpLanguage;
     use crate::tree::TreeMode;
     use ratatui::layout::Rect;
+    use ratatui::style::{Color, Modifier, Style};
+    use ratatui::text::Line;
+    use ratatui::text::Span;
     use tempfile::tempdir;
 
     #[test]
@@ -608,6 +754,30 @@ mod tests {
         let lines = wrap_numbered_preview_line(1, "\ta", 3, 10);
 
         assert_eq!(lines, vec!["  1 |     ", "    | a   "]);
+    }
+
+    #[test]
+    fn help_entry_uses_two_lines() {
+        let lines = help_entry("j / k", "Move selection");
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(
+            lines[0],
+            Line::from(vec![Span::styled(
+                "  j / k",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )])
+        );
+        assert_eq!(lines[1], Line::from("    Move selection"));
+    }
+
+    #[test]
+    fn help_max_scroll_grows_when_viewport_is_short() {
+        let max_scroll = help_max_scroll(HelpLanguage::En, 4, 24);
+
+        assert!(max_scroll > 0);
     }
 
     #[test]

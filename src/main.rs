@@ -83,6 +83,10 @@ fn run(
                 ui::preview_viewport_width(f.area(), &app),
                 ui::preview_viewport_height(f.area(), &app),
             );
+            app.set_help_viewport_size(
+                ui::help_viewport_width(f.area()),
+                ui::help_viewport_height(f.area()),
+            );
             ui::render(f, &app);
         })?;
 

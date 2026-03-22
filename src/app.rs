@@ -9,7 +9,7 @@ use arboard::Clipboard;
 use notify::{RecursiveMode, Watcher};
 use ratatui::layout::Rect;
 
-use crate::config::Config;
+use crate::config::{Config, HelpLanguage};
 use crate::git_status::{collect_ignored_paths, GitSnapshot, GitState};
 use crate::preview::{PreviewKind, PreviewRenderMode, PreviewState};
 use crate::tree::{Tree, TreeMode};
@@ -25,6 +25,71 @@ pub enum FocusPane {
     Preview,
 }
 
+impl HelpLanguage {
+    pub fn toggle(&mut self) {
+        *self = match self {
+            Self::Ja => Self::En,
+            Self::En => Self::Ja,
+        };
+    }
+}
+
+pub struct HelpState {
+    pub visible: bool,
+    pub language: HelpLanguage,
+    pub scroll: usize,
+    viewport_height: usize,
+    viewport_width: usize,
+}
+
+impl HelpState {
+    fn new(language: HelpLanguage) -> Self {
+        Self {
+            visible: false,
+            language,
+            scroll: 0,
+            viewport_height: 1,
+            viewport_width: 1,
+        }
+    }
+
+    fn open(&mut self) {
+        self.visible = true;
+        self.scroll = 0;
+    }
+
+    fn close(&mut self) {
+        self.visible = false;
+    }
+
+    fn set_viewport_size(&mut self, width: usize, height: usize) {
+        self.viewport_width = width.max(1);
+        self.viewport_height = height.max(1);
+    }
+
+    fn half_page_amount(&self) -> usize {
+        (self.viewport_height / 2).max(1)
+    }
+
+    fn page_amount(&self) -> usize {
+        self.viewport_height.max(1)
+    }
+
+    fn scroll_up(&mut self, amount: usize) {
+        self.scroll = self.scroll.saturating_sub(amount);
+    }
+
+    fn scroll_down(&mut self, amount: usize) {
+        self.scroll = self.scroll.saturating_add(amount);
+    }
+
+    fn clamp_scroll(&mut self) {
+        let max_scroll =
+            ui::help_max_scroll(self.language, self.viewport_height, self.viewport_width);
+        self.scroll = self.scroll.min(max_scroll);
+    }
+}
+
 pub struct App {
     pub config: Config,
     pub startup_root: PathBuf,
@@ -37,7 +102,7 @@ pub struct App {
     pub status_message: String,
     pub last_git_refresh: Instant,
     pub should_quit: bool,
-    pub show_help: bool,
+    pub help: HelpState,
     clipboard: Option<Clipboard>,
     status_expires_at: Option<Instant>,
     git_refresh_tx: Sender<GitSnapshot>,
@@ -67,6 +132,7 @@ pub enum Command {
     TogglePreviewMode,
     ToggleTreeMode,
     ToggleHelp,
+    ToggleHelpLanguage,
     NextChange,
     PrevChange,
     CopyRelativePath,
@@ -83,6 +149,7 @@ pub enum AppEffect {
 impl App {
     pub fn new(startup_root: PathBuf, initial_tree_mode: TreeMode) -> anyhow::Result<Self> {
         let config = Config::load();
+        let help_language = config.help.language;
         let git = GitSnapshot::collect(&startup_root);
         let tree = Tree::new(startup_root.clone(), initial_tree_mode, &git)?;
         let visible_ignored_paths = collect_ignored_paths(
@@ -120,7 +187,7 @@ impl App {
             status_message: String::from("ready"),
             last_git_refresh: Instant::now(),
             should_quit: false,
-            show_help: false,
+            help: HelpState::new(help_language),
             clipboard: Clipboard::new().ok(),
             status_expires_at: None,
             git_refresh_tx,
@@ -142,14 +209,22 @@ impl App {
     pub fn handle_command(&mut self, command: Command) -> Option<AppEffect> {
         self.poll_background_tasks();
 
-        if self.show_help {
+        if self.help.visible {
             match command {
                 Command::ToggleHelp | Command::Collapse => {
-                    self.show_help = false;
+                    self.help.close();
                 }
+                Command::MoveUp => self.help.scroll_up(1),
+                Command::MoveDown => self.help.scroll_down(1),
+                Command::PreviewHalfPageUp => self.help.scroll_up(self.help.half_page_amount()),
+                Command::PreviewHalfPageDown => self.help.scroll_down(self.help.half_page_amount()),
+                Command::PreviewPageUp => self.help.scroll_up(self.help.page_amount()),
+                Command::PreviewPageDown => self.help.scroll_down(self.help.page_amount()),
+                Command::ToggleHelpLanguage => self.help.language.toggle(),
                 Command::Quit => self.should_quit = true,
                 _ => {}
             }
+            self.help.clamp_scroll();
             return None;
         }
 
@@ -201,7 +276,11 @@ impl App {
             Command::RefreshGit => self.request_git_refresh(true),
             Command::TogglePreviewMode => self.toggle_preview_mode(),
             Command::ToggleTreeMode => self.toggle_tree_mode(),
-            Command::ToggleHelp => self.show_help = true,
+            Command::ToggleHelp => {
+                self.help.open();
+                self.help.clamp_scroll();
+            }
+            Command::ToggleHelpLanguage => {}
             Command::NextChange => self.jump_change(true),
             Command::PrevChange => self.jump_change(false),
             Command::CopyRelativePath => self.copy_relative_path(),
@@ -313,7 +392,7 @@ impl App {
         column: u16,
         row: u16,
     ) -> Option<AppEffect> {
-        if self.show_help {
+        if self.help.visible {
             return None;
         }
 
@@ -334,7 +413,7 @@ impl App {
     }
 
     pub fn update_tree_hover(&mut self, terminal_area: Rect, column: u16, row: u16) {
-        if self.show_help {
+        if self.help.visible {
             self.hovered_tree_index = None;
             return;
         }
@@ -350,7 +429,21 @@ impl App {
         row: u16,
         scroll_up: bool,
     ) {
-        if self.show_help || !ui::preview_contains(terminal_area, self, column, row) {
+        if self.help.visible {
+            if !ui::help_contains(terminal_area, column, row) {
+                return;
+            }
+
+            if scroll_up {
+                self.help.scroll_up(PREVIEW_WHEEL_SCROLL_AMOUNT);
+            } else {
+                self.help.scroll_down(PREVIEW_WHEEL_SCROLL_AMOUNT);
+            }
+            self.help.clamp_scroll();
+            return;
+        }
+
+        if !ui::preview_contains(terminal_area, self, column, row) {
             return;
         }
 
@@ -497,6 +590,11 @@ impl App {
         self.clamp_preview_scroll();
     }
 
+    pub fn set_help_viewport_size(&mut self, width: usize, height: usize) {
+        self.help.set_viewport_size(width, height);
+        self.help.clamp_scroll();
+    }
+
     fn set_temporary_status(&mut self, msg: impl Into<String>) {
         self.status_message = msg.into();
         self.status_expires_at = Some(Instant::now() + COPY_STATUS_DURATION);
@@ -628,6 +726,7 @@ mod tests {
     use git2::{IndexAddOption, Repository, Signature};
     use tempfile::tempdir;
 
+    use crate::config::HelpLanguage;
     use crate::git_status::GitState;
     use crate::preview::PreviewRenderMode;
     use crate::tree::TreeMode;
@@ -810,7 +909,7 @@ mod tests {
         select_by_file_name(&mut app, "note.txt");
         let _ = app.handle_command(Command::ExpandOrOpen);
         app.set_preview_viewport_size(20, 4);
-        app.show_help = true;
+        app.help.visible = true;
         let terminal_area = Rect::new(0, 0, 20, 10);
         let preview_area = ui::preview_area(terminal_area, &app);
 
@@ -873,13 +972,33 @@ mod tests {
         let before = app.tree.selected_path().to_path_buf();
 
         let _ = app.handle_command(Command::ToggleHelp);
-        assert!(app.show_help);
+        assert!(app.help.visible);
 
         let _ = app.handle_command(Command::MoveDown);
         assert_eq!(app.tree.selected_path(), before.as_path());
 
         let _ = app.handle_command(Command::ToggleHelp);
-        assert!(!app.show_help);
+        assert!(!app.help.visible);
+    }
+
+    #[test]
+    fn help_language_toggles_only_in_help() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        let mut app =
+            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
+
+        app.help.language = HelpLanguage::En;
+        assert_eq!(app.help.language, HelpLanguage::En);
+
+        let _ = app.handle_command(Command::ToggleHelpLanguage);
+        assert_eq!(app.help.language, HelpLanguage::En);
+
+        let _ = app.handle_command(Command::ToggleHelp);
+        let _ = app.handle_command(Command::ToggleHelpLanguage);
+        assert_eq!(app.help.language, HelpLanguage::Ja);
+
+        let _ = app.handle_command(Command::ToggleHelpLanguage);
+        assert_eq!(app.help.language, HelpLanguage::En);
     }
 
     #[test]

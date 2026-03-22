@@ -148,7 +148,14 @@ minishelf .
 tree_ratio_normal = 50
 # プレビューパネルにフォーカスが当たった時の上部ツリーパネルの割合 (%)
 tree_ratio_preview_focused = 10
+
+[help]
+# ヘルプモーダルの初期表示言語: "en" または "ja"
+language = "en"
 ```
+
+ヘルプモーダルは起動時に `help.language` の値を使って表示されます。既定値は `en` です。
+ヘルプ表示中に `t` キーで英語と日本語を切り替えできます。
 
 ---
 

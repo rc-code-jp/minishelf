@@ -18,6 +18,7 @@ pub fn map_event(key: KeyEvent) -> Option<Command> {
         (KeyCode::Tab, _) => Some(Command::ToggleTreeMode),
         (KeyCode::Char('v'), _) => Some(Command::OpenInVi),
         (KeyCode::Char('?'), _) | (KeyCode::F(1), _) => Some(Command::ToggleHelp),
+        (KeyCode::Char('t'), _) => Some(Command::ToggleHelpLanguage),
         (KeyCode::Char('n'), _) => Some(Command::NextChange),
         (KeyCode::Char('N'), _) => Some(Command::PrevChange),
         (KeyCode::Char('c'), _) => Some(Command::CopyRelativePath),
@@ -58,6 +59,15 @@ mod tests {
     fn p_maps_to_toggle_preview_mode() {
         let event = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE);
         assert!(matches!(map_event(event), Some(Command::TogglePreviewMode)));
+    }
+
+    #[test]
+    fn t_maps_to_toggle_help_language() {
+        let event = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE);
+        assert!(matches!(
+            map_event(event),
+            Some(Command::ToggleHelpLanguage)
+        ));
     }
 
     #[test]
