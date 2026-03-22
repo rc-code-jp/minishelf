@@ -1428,7 +1428,7 @@ mod tests {
     }
 
     #[test]
-    fn collapse_moves_selection_back_to_parent_directory() {
+    fn collapse_on_child_closes_parent_directory() {
         let tmp = tempdir().expect("tmpdir should exist");
         let root = tmp.path().join("root");
         fs::create_dir_all(root.join("sub")).expect("create dir should succeed");
@@ -1442,6 +1442,9 @@ mod tests {
         let _ = app.handle_command(Command::Collapse);
 
         assert_eq!(app.tree.selected_path(), root.join("sub").as_path());
+        assert_eq!(app.tree.entries.len(), 1);
+        assert_eq!(app.tree.entries[0].name, "sub");
+        assert!(!app.tree.entries[0].is_expanded);
     }
 
     #[test]

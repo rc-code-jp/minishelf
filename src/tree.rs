@@ -89,7 +89,20 @@ impl Tree {
             return self.reload_entries(Some(&selected.path));
         }
 
-        if let Some(parent_index) = self.parent_index_of(&selected.path) {
+        let Some(parent_path) = self.parent_path_of(&selected.path) else {
+            return Ok(());
+        };
+
+        if self.expanded_dirs.contains(&parent_path) {
+            self.expanded_dirs.remove(&parent_path);
+            return self.reload_entries(Some(&parent_path));
+        }
+
+        if let Some(parent_index) = self
+            .entries
+            .iter()
+            .position(|entry| entry.path == parent_path)
+        {
             self.selected = parent_index;
         }
 
@@ -227,13 +240,13 @@ impl Tree {
         }
     }
 
-    fn parent_index_of(&self, path: &Path) -> Option<usize> {
+    fn parent_path_of(&self, path: &Path) -> Option<PathBuf> {
         let parent = path.parent()?;
         if parent == self.startup_root {
             return None;
         }
 
-        self.entries.iter().position(|entry| entry.path == parent)
+        Some(parent.to_path_buf())
     }
 }
 
@@ -401,8 +414,8 @@ mod tests {
         fs::create_dir_all(root.join("sub")).expect("create dirs should work");
         fs::write(root.join("sub/file.txt"), "hello").expect("write file should work");
 
-        let mut tree =
-            Tree::new(root, TreeMode::Normal, &GitSnapshot::default()).expect("tree should build");
+        let mut tree = Tree::new(root.clone(), TreeMode::Normal, &GitSnapshot::default())
+            .expect("tree should build");
         tree.expand_selected().expect("expand should work");
 
         assert_eq!(tree.entries.len(), 2);
@@ -420,8 +433,8 @@ mod tests {
         fs::create_dir_all(root.join("sub")).expect("create dirs should work");
         fs::write(root.join("sub/file.txt"), "hello").expect("write file should work");
 
-        let mut tree =
-            Tree::new(root, TreeMode::Normal, &GitSnapshot::default()).expect("tree should build");
+        let mut tree = Tree::new(root.clone(), TreeMode::Normal, &GitSnapshot::default())
+            .expect("tree should build");
         tree.expand_selected().expect("expand should work");
         tree.collapse_selected().expect("collapse should work");
 
@@ -431,23 +444,23 @@ mod tests {
     }
 
     #[test]
-    fn collapse_on_child_moves_selection_to_parent_directory() {
+    fn collapse_on_child_closes_parent_directory() {
         let tmp = tempdir().expect("tmpdir should exist");
         let root = tmp.path().join("root");
         fs::create_dir_all(root.join("sub")).expect("create dirs should work");
         fs::write(root.join("sub/file.txt"), "hello").expect("write file should work");
 
-        let mut tree =
-            Tree::new(root, TreeMode::Normal, &GitSnapshot::default()).expect("tree should build");
+        let mut tree = Tree::new(root.clone(), TreeMode::Normal, &GitSnapshot::default())
+            .expect("tree should build");
         tree.expand_selected().expect("expand should work");
         tree.move_down();
 
         tree.collapse_selected().expect("collapse should work");
 
-        assert_eq!(
-            tree.selected_path().file_name().and_then(|n| n.to_str()),
-            Some("sub")
-        );
+        assert_eq!(tree.entries.len(), 1);
+        assert_eq!(tree.entries[0].name, "sub");
+        assert!(!tree.entries[0].is_expanded);
+        assert_eq!(tree.selected_path(), root.join("sub").as_path());
     }
 
     #[test]
