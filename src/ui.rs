@@ -359,7 +359,7 @@ fn help_content(language: HelpLanguage) -> (&'static str, Vec<Line<'static>>) {
             lines.extend(help_entry("h / Left", "Collapse dir or move to parent"));
             lines.extend(help_entry("l / Right / Enter", "Toggle selected directory"));
             lines.extend(help_entry("Left click", "Select files, toggle directories"));
-            lines.extend(help_entry("Double click file", "Copy @-relative path"));
+            lines.extend(help_entry("Right click", "Copy @-relative path"));
             lines.extend(help_entry("Mouse wheel on tree", "Scroll tree by 3 lines"));
             lines.extend(help_blank());
             lines.extend(help_section("General"));

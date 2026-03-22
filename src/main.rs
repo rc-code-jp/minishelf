@@ -134,6 +134,12 @@ fn run(
                                 },
                             }
                         }
+                    } else if matches!(mouse_event.kind, MouseEventKind::Down(MouseButton::Right)) {
+                        app.handle_tree_right_click(
+                            terminal_area,
+                            mouse_event.column,
+                            mouse_event.row,
+                        );
                     } else if matches!(mouse_event.kind, MouseEventKind::ScrollUp) {
                         app.handle_mouse_wheel(
                             terminal_area,

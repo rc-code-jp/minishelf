@@ -15,7 +15,6 @@ use crate::tree::{Tree, TreeMode};
 use crate::ui;
 
 const COPY_STATUS_DURATION: Duration = Duration::from_secs(3);
-const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
 const FS_REFRESH_DEBOUNCE: Duration = Duration::from_millis(300);
 const HELP_WHEEL_SCROLL_AMOUNT: usize = 3;
 const TREE_WHEEL_SCROLL_AMOUNT: usize = 3;
@@ -97,15 +96,8 @@ pub struct App {
     pending_manual_refresh: bool,
     pending_fs_refresh: bool,
     last_fs_event_at: Option<Instant>,
-    last_left_click: Option<LastLeftClick>,
     tree_scroll: usize,
     tree_viewport_height: usize,
-}
-
-#[derive(Debug, Clone)]
-struct LastLeftClick {
-    path: PathBuf,
-    at: Instant,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -176,7 +168,6 @@ impl App {
             pending_manual_refresh: false,
             pending_fs_refresh: false,
             last_fs_event_at: None,
-            last_left_click: None,
             tree_scroll: 0,
             tree_viewport_height: 1,
         };
@@ -341,33 +332,30 @@ impl App {
             return None;
         }
 
-        let tree_area = ui::tree_area(terminal_area, self);
-        let index = ui::tree_index_at(tree_area, self, column, row)?;
-
-        if !self.tree.select_index(index) {
+        if !self.select_tree_index_at(terminal_area, column, row) {
             return None;
         }
 
         self.ensure_tree_selection_visible();
-        let selected_path = self.tree.selected_path().to_path_buf();
-        let now = Instant::now();
 
         if self.tree.selected_is_dir() {
-            self.last_left_click = None;
             return self.handle_command(Command::ExpandOrOpen);
         }
 
-        if self.is_double_click_on_selected_file(&selected_path, now) {
-            self.copy_relative_path();
-            self.last_left_click = None;
-        } else {
-            self.last_left_click = Some(LastLeftClick {
-                path: selected_path,
-                at: now,
-            });
+        None
+    }
+
+    pub fn handle_tree_right_click(&mut self, terminal_area: Rect, column: u16, row: u16) {
+        if self.help.visible {
+            return;
         }
 
-        None
+        if !self.select_tree_index_at(terminal_area, column, row) {
+            return;
+        }
+
+        self.ensure_tree_selection_visible();
+        self.copy_relative_path();
     }
 
     pub fn update_tree_hover(&mut self, terminal_area: Rect, column: u16, row: u16) {
@@ -609,10 +597,13 @@ impl App {
         }
     }
 
-    fn is_double_click_on_selected_file(&self, path: &Path, now: Instant) -> bool {
-        self.last_left_click.as_ref().is_some_and(|last_click| {
-            last_click.path == path && now.duration_since(last_click.at) <= DOUBLE_CLICK_INTERVAL
-        })
+    fn select_tree_index_at(&mut self, terminal_area: Rect, column: u16, row: u16) -> bool {
+        let tree_area = ui::tree_area(terminal_area, self);
+        let Some(index) = ui::tree_index_at(tree_area, self, column, row) else {
+            return false;
+        };
+
+        self.tree.select_index(index)
     }
 }
 
@@ -672,7 +663,7 @@ mod tests {
 
     use super::{
         format_relative_with_at, resolve_directory_to_open, App, AppEffect, Command,
-        DOUBLE_CLICK_INTERVAL, FS_REFRESH_DEBOUNCE, TREE_WHEEL_SCROLL_AMOUNT,
+        FS_REFRESH_DEBOUNCE, TREE_WHEEL_SCROLL_AMOUNT,
     };
 
     #[test]
@@ -1016,7 +1007,7 @@ mod tests {
     }
 
     #[test]
-    fn tree_double_click_copies_selected_file() {
+    fn tree_left_click_on_same_file_does_not_copy() {
         let tmp = tempdir().expect("tmpdir should exist");
         fs::write(tmp.path().join("a.txt"), "a").expect("write should succeed");
         fs::write(tmp.path().join("b.txt"), "b").expect("write should succeed");
@@ -1030,25 +1021,6 @@ mod tests {
         let effect = app.handle_tree_left_click(terminal_area, tree_area.x + 1, tree_area.y + 2);
 
         assert_eq!(effect, None);
-        assert_eq!(app.status_message, "clipboard unavailable");
-    }
-
-    #[test]
-    fn tree_click_outside_double_click_window_does_not_copy() {
-        let tmp = tempdir().expect("tmpdir should exist");
-        fs::write(tmp.path().join("a.txt"), "a").expect("write should succeed");
-        fs::write(tmp.path().join("b.txt"), "b").expect("write should succeed");
-        let mut app =
-            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
-        let terminal_area = Rect::new(0, 0, 20, 10);
-        let tree_area = ui::tree_area(terminal_area, &app);
-
-        let _ = app.handle_tree_left_click(terminal_area, tree_area.x + 1, tree_area.y + 2);
-        if let Some(last_click) = app.last_left_click.as_mut() {
-            last_click.at -= DOUBLE_CLICK_INTERVAL + Duration::from_millis(1);
-        }
-        let _ = app.handle_tree_left_click(terminal_area, tree_area.x + 1, tree_area.y + 2);
-
         assert_eq!(app.status_message, "ready");
     }
 
@@ -1070,7 +1042,7 @@ mod tests {
     }
 
     #[test]
-    fn tree_double_click_copies_deleted_file() {
+    fn tree_right_click_copies_deleted_file() {
         let tmp = tempdir().expect("tmpdir should exist");
         let root = tmp.path();
         let repo = Repository::init(root).expect("git init should succeed");
@@ -1086,8 +1058,7 @@ mod tests {
         let tree_area = ui::tree_area(terminal_area, &app);
         let row = tree_area.y + 1 + index as u16;
 
-        let _ = app.handle_tree_left_click(terminal_area, tree_area.x + 1, row);
-        let _ = app.handle_tree_left_click(terminal_area, tree_area.x + 1, row);
+        app.handle_tree_right_click(terminal_area, tree_area.x + 1, row);
 
         assert_eq!(app.status_message, "clipboard unavailable");
     }
@@ -1107,6 +1078,40 @@ mod tests {
         assert_eq!(effect, None);
         assert_eq!(app.tree.entries.len(), 2);
         assert_eq!(app.tree.entries[1].name, "note.txt");
+    }
+
+    #[test]
+    fn tree_right_click_copies_selected_file() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        fs::write(tmp.path().join("a.txt"), "a").expect("write should succeed");
+        fs::write(tmp.path().join("b.txt"), "b").expect("write should succeed");
+        let mut app =
+            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
+        app.clipboard = None;
+        let terminal_area = Rect::new(0, 0, 20, 10);
+        let tree_area = ui::tree_area(terminal_area, &app);
+
+        app.handle_tree_right_click(terminal_area, tree_area.x + 1, tree_area.y + 2);
+
+        assert_eq!(app.tree.selected_path(), tmp.path().join("b.txt").as_path());
+        assert_eq!(app.status_message, "clipboard unavailable");
+    }
+
+    #[test]
+    fn tree_right_click_on_directory_does_not_expand() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        fs::create_dir_all(tmp.path().join("sub")).expect("create dir should succeed");
+        fs::write(tmp.path().join("sub/note.txt"), "hello").expect("write should succeed");
+        let mut app =
+            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
+        let terminal_area = Rect::new(0, 0, 20, 10);
+        let tree_area = ui::tree_area(terminal_area, &app);
+
+        app.handle_tree_right_click(terminal_area, tree_area.x + 1, tree_area.y + 1);
+
+        assert_eq!(app.tree.entries.len(), 1);
+        assert_eq!(app.tree.selected_path(), tmp.path().join("sub").as_path());
+        assert_eq!(app.status_message, "copied: @sub");
     }
 
     #[test]
