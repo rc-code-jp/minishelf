@@ -49,7 +49,7 @@ jobs:
       contents: read
     env:
       TARGET: aarch64-apple-darwin
-      ARCHIVE_NAME: minishelf-${{ needs.resolve_ref.outputs.version }}-aarch64-apple-darwin
+      ARCHIVE_NAME: pocoshelf-${{ needs.resolve_ref.outputs.version }}-aarch64-apple-darwin
       APPLE_CODESIGN_ENABLED: ${{ vars.APPLE_CODESIGN_ENABLED || 'false' }}
       APPLE_SIGN_IDENTITY: ${{ secrets.APPLE_SIGN_IDENTITY }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -75,8 +75,8 @@ jobs:
         run: |
           set -euo pipefail
           cargo build --release --locked --target "$TARGET"
-          cp "target/$TARGET/release/minishelf" minishelf
-          chmod +x minishelf
+          cp "target/$TARGET/release/pocoshelf" pocoshelf
+          chmod +x pocoshelf
 
       - name: Import Developer ID certificate
         if: env.APPLE_CODESIGN_ENABLED == 'true'
@@ -108,8 +108,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          codesign --force --options runtime --sign "$APPLE_SIGN_IDENTITY" minishelf
-          codesign --verify --verbose=2 minishelf
+          codesign --force --options runtime --sign "$APPLE_SIGN_IDENTITY" pocoshelf
+          codesign --verify --verbose=2 pocoshelf
 
       - name: Notarize binary
         if: env.APPLE_CODESIGN_ENABLED == 'true'
@@ -123,22 +123,22 @@ jobs:
           mkdir -p "$RUNNER_TEMP/private_keys"
           printf '%s' "$APPLE_API_PRIVATE_KEY_BASE64" | base64 -d > "$RUNNER_TEMP/private_keys/AuthKey_$APPLE_API_KEY_ID.p8" 2>/dev/null || \
             printf '%s' "$APPLE_API_PRIVATE_KEY_BASE64" | base64 -D > "$RUNNER_TEMP/private_keys/AuthKey_$APPLE_API_KEY_ID.p8"
-          ditto -c -k --keepParent minishelf "$RUNNER_TEMP/${ARCHIVE_NAME}.zip"
+          ditto -c -k --keepParent pocoshelf "$RUNNER_TEMP/${ARCHIVE_NAME}.zip"
           xcrun notarytool submit "$RUNNER_TEMP/${ARCHIVE_NAME}.zip" \
             --key "$RUNNER_TEMP/private_keys/AuthKey_$APPLE_API_KEY_ID.p8" \
             --key-id "$APPLE_API_KEY_ID" \
             --issuer "$APPLE_API_ISSUER_ID" \
             --team-id "$APPLE_TEAM_ID" \
             --wait
-          xcrun stapler staple minishelf
-          spctl --assess --type execute --verbose minishelf
+          xcrun stapler staple pocoshelf
+          spctl --assess --type execute --verbose pocoshelf
 
       - name: Package archive
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist
-          tar -czf "dist/${ARCHIVE_NAME}.tar.gz" minishelf
+          tar -czf "dist/${ARCHIVE_NAME}.tar.gz" pocoshelf
 
       - name: Upload release artifact
         uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
@@ -192,7 +192,7 @@ jobs:
         run: |
           set -euo pipefail
           version="${{ needs.resolve_ref.outputs.version }}"
-          archive="minishelf-${version}-aarch64-apple-darwin.tar.gz"
+          archive="pocoshelf-${version}-aarch64-apple-darwin.tar.gz"
           sha256="$(awk -v file="$archive" '$2 == file { print $1 }' dist/checksums.txt)"
           url="https://github.com/${{ github.repository }}/releases/download/v${version}/${archive}"
 
@@ -227,7 +227,7 @@ jobs:
       contents: read
     env:
       TAP_REPOSITORY: rc-code-jp/homebrew-tap
-      FORMULA_PATH: Formula/minishelf.rb
+      FORMULA_PATH: Formula/pocoshelf.rb
     steps:
       - name: Generate GitHub App installation token
         id: app-token
@@ -346,7 +346,7 @@ jobs:
         run: |
           set -euo pipefail
           cd homebrew-tap
-          git config user.name "minishelf release bot"
+          git config user.name "pocoshelf release bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add "${FORMULA_PATH}"
 
@@ -355,5 +355,5 @@ jobs:
             exit 0
           fi
 
-          git commit -m "minishelf ${VERSION}"
+          git commit -m "pocoshelf ${VERSION}"
           git push origin HEAD:main

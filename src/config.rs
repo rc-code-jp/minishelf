@@ -47,14 +47,14 @@ impl Config {
         if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
             Some(
                 PathBuf::from(config_home)
-                    .join("minishelf")
+                    .join("pocoshelf")
                     .join("config.toml"),
             )
         } else {
             directories::BaseDirs::new().map(|dirs| {
                 dirs.home_dir()
                     .join(".config")
-                    .join("minishelf")
+                    .join("pocoshelf")
                     .join("config.toml")
             })
         }

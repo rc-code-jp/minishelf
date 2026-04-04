@@ -114,7 +114,10 @@ fn run(
                                 mouse_event.column,
                                 mouse_event.row,
                             );
-                        } else if matches!(mouse_event.kind, MouseEventKind::Down(MouseButton::Right)) {
+                        } else if matches!(
+                            mouse_event.kind,
+                            MouseEventKind::Down(MouseButton::Right)
+                        ) {
                             app.context_menu = None;
                         }
                     } else if matches!(mouse_event.kind, MouseEventKind::Down(MouseButton::Left)) {

@@ -1,6 +1,6 @@
-# minishelf
+# pocoshelf
 
-`minishelf` は、**AI エージェント（Claude Code / Codex など）の“横”に置いて、リポジトリ内のファイルを手早く確認する**ための Rust 製 TUI ツールです。  
+`pocoshelf` は、**AI エージェント（Claude Code / Codex など）の“横”に置いて、リポジトリ内のファイルを手早く確認する**ための Rust 製 TUI ツールです。  
 ターミナル上で、起動ルート固定のファイルツリーを軽快に確認できます。
 
 エージェントに修正を任せつつ、開発者が手元で「今どこを見ているか」「何が変わっているか」をサクッと確認する用途に向いています。
@@ -29,19 +29,19 @@ https://github.com/user-attachments/assets/83a1a710-89cd-4e31-8601-7c8e6f3cdce4
 
 ```bash
 brew tap rc-code-jp/tap
-brew install minishelf
+brew install pocoshelf
 ```
 
 アップデート:
 
 ```bash
-brew upgrade minishelf
+brew upgrade pocoshelf
 ```
 
 1 行で入れる場合:
 
 ```bash
-brew install rc-code-jp/tap/minishelf
+brew install rc-code-jp/tap/pocoshelf
 ```
 
 現在の配布ターゲット:
@@ -49,7 +49,7 @@ brew install rc-code-jp/tap/minishelf
 
 ### 2) GitHub Releases から直接入れる
 
-GitHub Releases から `minishelf-<version>-aarch64-apple-darwin.tar.gz` を取得し、展開した `minishelf` バイナリを PATH の通った場所へ配置してください。
+GitHub Releases から `pocoshelf-<version>-aarch64-apple-darwin.tar.gz` を取得し、展開した `pocoshelf` バイナリを PATH の通った場所へ配置してください。
 各リリースには `checksums.txt` を添付します。
 
 - 最小構成では署名 / notarization なしで配布できます
@@ -75,7 +75,7 @@ cargo run -- /path/to/project
 ## 使い方（クイックスタート）
 
 ```bash
-minishelf .
+pocoshelf .
 ```
 
 - 画面全体: ファイルツリー
@@ -122,7 +122,7 @@ minishelf .
 
 ## 設定 (Configuration)
 
-`~/.config/minishelf/config.toml` (OSの標準的な設定ディレクトリ、または環境変数 `XDG_CONFIG_HOME` に準拠) に設定ファイルを作成することで、ヘルプの初期表示言語を変更できます。
+`~/.config/pocoshelf/config.toml` (OSの標準的な設定ディレクトリ、または環境変数 `XDG_CONFIG_HOME` に準拠) に設定ファイルを作成することで、ヘルプの初期表示言語を変更できます。
 
 ```toml
 [help]
@@ -152,8 +152,8 @@ language = "en"
 ## 起動オプション
 
 ```bash
-minishelf --tree-mode changed
-minishelf --tree-mode normal ~/work/repo
+pocoshelf --tree-mode changed
+pocoshelf --tree-mode normal ~/work/repo
 ```
 
 - `--tree-mode normal`: 通常のツリー表示
@@ -180,9 +180,9 @@ git push origin v<version>
 - `sha256`
 - `rc-code-jp/homebrew-tap` の自動更新結果
 
-5. 自動更新が失敗した場合だけ `rc-code-jp/homebrew-tap` の `Formula/minishelf.rb` を手動更新して push する
+5. 自動更新が失敗した場合だけ `rc-code-jp/homebrew-tap` の `Formula/pocoshelf.rb` を手動更新して push する
 
-ユーザーはその後 `brew upgrade minishelf` で更新できます。
+ユーザーはその後 `brew upgrade pocoshelf` で更新できます。
 
 詳細は [`docs/release.md`](docs/release.md) を参照してください。
 Homebrew tap 更新を GitHub App で自動化する場合は [`docs/github-app-homebrew-tap.md`](docs/github-app-homebrew-tap.md) を参照してください。
@@ -190,7 +190,7 @@ Homebrew tap 更新を GitHub App で自動化する場合は [`docs/github-app-
 
 ### Homebrew formula テンプレート
 
-`packaging/homebrew/minishelf.rb` を `rc-code-jp/homebrew-tap` の `Formula/minishelf.rb` にコピーし、以下プレースホルダーを置換してください。
+`packaging/homebrew/pocoshelf.rb` を `rc-code-jp/homebrew-tap` の `Formula/pocoshelf.rb` にコピーし、以下プレースホルダーを置換してください。
 
 - `__VERSION__`
 - `__SHA256_AARCH64_APPLE_DARWIN__`

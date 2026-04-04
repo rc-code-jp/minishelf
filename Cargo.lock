@@ -880,23 +880,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
-name = "minishelf"
-version = "2.3.0"
-dependencies = [
- "anyhow",
- "arboard",
- "clap",
- "crossterm",
- "directories",
- "git2",
- "notify",
- "ratatui",
- "serde",
- "tempfile",
- "toml",
-]
-
-[[package]]
 name = "miniz_oxide"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1125,6 +1108,23 @@ dependencies = [
  "fdeflate",
  "flate2",
  "miniz_oxide",
+]
+
+[[package]]
+name = "pocoshelf"
+version = "2.3.0"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "clap",
+ "crossterm",
+ "directories",
+ "git2",
+ "notify",
+ "ratatui",
+ "serde",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]

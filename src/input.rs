@@ -61,5 +61,4 @@ mod tests {
         let event = KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE);
         assert!(matches!(map_event(event), Some(Command::ToggleTreeMode)));
     }
-
 }

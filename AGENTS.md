@@ -5,7 +5,7 @@ This document defines how AI coding agents should work in this repository.
 Goal: keep changes safe, reviewable, and aligned with the current product direction.
 
 ## Project Summary
-- Name: `minishelf`
+- Name: `pocoshelf`
 - Type: Rust TUI application
 - Core features:
   - File tree view (startup-root locked)
@@ -29,7 +29,7 @@ When instructions conflict, follow this order:
 - `src/git_status.rs`: git status collection and folder state aggregation
 - `src/input.rs`: key bindings
 - `.github/workflows/release.yml`: release automation
-- `packaging/homebrew/minishelf.rb`: Homebrew formula template
+- `packaging/homebrew/pocoshelf.rb`: Homebrew formula template
 
 ## Agent Working Rules
 
@@ -72,7 +72,7 @@ Before finalizing a change, verify:
 ## Release Notes for Agents
 If a change affects packaging/distribution, update both:
 - `README.md` (maintainer/user flow)
-- `packaging/homebrew/minishelf.rb` template placeholders or instructions
+- `packaging/homebrew/pocoshelf.rb` template placeholders or instructions
 
 If release process changes, also update:
 - `.github/workflows/release.yml`

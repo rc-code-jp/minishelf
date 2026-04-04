@@ -1,6 +1,6 @@
 # Release Guide
 
-このドキュメントは `minishelf` のメンテナー向けリリース手順です。
+このドキュメントは `pocoshelf` のメンテナー向けリリース手順です。
 
 ## 配布方針
 
@@ -20,7 +20,7 @@
   - `cargo clippy --all-targets --all-features -- -D warnings`
   - `cargo test`
 - `rc-code-jp/homebrew-tap` リポジトリが作成済みであること
-- `minishelf` リポジトリに共用 GitHub App `homebrew-sync` 用の `APP_ID` secret と `APP_PRIVATE_KEY` secret が設定済みであること
+- `pocoshelf` リポジトリに共用 GitHub App `homebrew-sync` 用の `APP_ID` secret と `APP_PRIVATE_KEY` secret が設定済みであること
 
 ## 最小構成でのリリース手順
 
@@ -44,7 +44,7 @@ git push origin v<version>
 
 `push` されたタグで `.github/workflows/release.yml` が起動し、以下を公開します。
 
-- `minishelf-<version>-aarch64-apple-darwin.tar.gz`
+- `pocoshelf-<version>-aarch64-apple-darwin.tar.gz`
 - `checksums.txt`
 
 ### 3. 手動実行する場合（workflow_dispatch）
@@ -56,7 +56,7 @@ GitHub Actions の `release` workflow を手動起動する場合は、`tag` 入
 
 ### 4. workflow の自動更新結果を確認する
 
-workflow は GitHub Release 公開後に `rc-code-jp/homebrew-tap` の `Formula/minishelf.rb` を自動更新します。
+workflow は GitHub Release 公開後に `rc-code-jp/homebrew-tap` の `Formula/pocoshelf.rb` を自動更新します。
 
 Actions summary で次を確認してください。
 
@@ -68,12 +68,12 @@ Actions summary で次を確認してください。
 `url` は次の形式です。
 
 ```text
-https://github.com/rc-code-jp/minishelf/releases/download/v<version>/minishelf-<version>-aarch64-apple-darwin.tar.gz
+https://github.com/rc-code-jp/pocoshelf/releases/download/v<version>/pocoshelf-<version>-aarch64-apple-darwin.tar.gz
 ```
 
 ### 5. 自動更新が失敗した場合だけ `rc-code-jp/homebrew-tap` を手動更新する
 
-`Formula/minishelf.rb` の最低限の更新箇所は次の 2 つです。
+`Formula/pocoshelf.rb` の最低限の更新箇所は次の 2 つです。
 
 ```ruby
 version "<version>"
@@ -85,12 +85,12 @@ sha256 "<checksums.txt の値>"
 更新後に commit / push します。
 
 ```bash
-git add Formula/minishelf.rb
-git commit -m "minishelf <version>"
+git add Formula/pocoshelf.rb
+git commit -m "pocoshelf <version>"
 git push origin main
 ```
 
-これでユーザーは `brew upgrade minishelf` で更新できます。
+これでユーザーは `brew upgrade pocoshelf` で更新できます。
 
 GitHub App の設定方法は [`docs/github-app-homebrew-tap.md`](github-app-homebrew-tap.md) を参照してください。
 
@@ -134,7 +134,7 @@ GitHub App の設定方法は [`docs/github-app-homebrew-tap.md`](github-app-hom
 
 - `Invalid tag: ...`
   - `vX.Y.Z` 形式のタグか確認する
-- `Missing checksum for minishelf-...`
+- `Missing checksum for pocoshelf-...`
   - Release asset 名と `checksums.txt` の内容が一致しているか確認する
 - `codesign` / `notarytool` が失敗する
   - `APPLE_CODESIGN_ENABLED=true` のときだけ走るので、Secrets と証明書の内容を確認する

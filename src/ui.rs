@@ -466,12 +466,7 @@ fn context_menu_rect(menu: &ContextMenu, area: Rect) -> Rect {
     Rect::new(x, y, CONTEXT_MENU_WIDTH, CONTEXT_MENU_HEIGHT)
 }
 
-pub fn context_menu_item_at(
-    area: Rect,
-    app: &App,
-    column: u16,
-    row: u16,
-) -> Option<usize> {
+pub fn context_menu_item_at(area: Rect, app: &App, column: u16, row: u16) -> Option<usize> {
     let menu = app.context_menu.as_ref()?;
     let rect = context_menu_rect(menu, area);
     let inner_x = column.checked_sub(rect.x + 1)?;
@@ -492,7 +487,14 @@ fn render_context_menu(frame: &mut Frame<'_>, menu: &ContextMenu, area: Rect) {
     let rect = context_menu_rect(menu, area);
     let inner_width = rect.width.saturating_sub(2) as usize;
 
-    let labels = ["@ copy path", "copy path", "cat command copy", "vi command copy", "open in Finder", "cancel"];
+    let labels = [
+        "@ copy path",
+        "copy path",
+        "cat command copy",
+        "vi command copy",
+        "open in Finder",
+        "cancel",
+    ];
     let mut lines = Vec::new();
     for (i, label) in labels.iter().enumerate() {
         let is_selected = i == menu.selected;

@@ -766,8 +766,8 @@ mod tests {
     use crate::ui;
 
     use super::{
-        format_relative_with_at, resolve_directory_to_open, App, Command,
-        FS_REFRESH_DEBOUNCE, TREE_WHEEL_SCROLL_AMOUNT,
+        format_relative_with_at, resolve_directory_to_open, App, Command, FS_REFRESH_DEBOUNCE,
+        TREE_WHEEL_SCROLL_AMOUNT,
     };
 
     #[test]
@@ -1295,7 +1295,7 @@ mod tests {
         index.write().expect("index write should succeed");
         let tree_id = index.write_tree().expect("write tree should succeed");
         let tree = repo.find_tree(tree_id).expect("tree should exist");
-        let sig = Signature::now("minishelf", "minishelf@example.com").expect("sig should work");
+        let sig = Signature::now("pocoshelf", "pocoshelf@example.com").expect("sig should work");
 
         let parent = repo
             .head()
