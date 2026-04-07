@@ -141,8 +141,8 @@ pub enum Command {
     ToggleTreeMode,
     ToggleHelp,
     ToggleHelpLanguage,
+    CopyAtRelativePath,
     CopyRelativePath,
-    CopyPlainRelativePath,
     OpenInFinder,
     Quit,
 }
@@ -267,8 +267,8 @@ impl App {
                 self.help.clamp_scroll();
             }
             Command::ToggleHelpLanguage => {}
+            Command::CopyAtRelativePath => self.copy_at_relative_path(),
             Command::CopyRelativePath => self.copy_relative_path(),
-            Command::CopyPlainRelativePath => self.copy_plain_relative_path(),
             Command::OpenInFinder => self.open_in_finder(),
             Command::Quit => self.should_quit = true,
         }
@@ -422,8 +422,8 @@ impl App {
         let selected = self.context_menu.as_ref().map(|m| m.selected).unwrap_or(0);
         self.context_menu = None;
         match selected {
-            0 => self.copy_relative_path(),
-            1 => self.copy_plain_relative_path(),
+            0 => self.copy_at_relative_path(),
+            1 => self.copy_relative_path(),
             2 => self.copy_cat_command(),
             3 => self.copy_vi_command(),
             4 => self.open_in_finder(),
@@ -516,7 +516,7 @@ impl App {
         self.set_temporary_status(self.tree_mode_status_message());
     }
 
-    fn copy_relative_path(&mut self) {
+    fn copy_at_relative_path(&mut self) {
         let selected = self.tree.selected_path();
         match format_relative_with_at(&self.startup_root, selected) {
             Ok(text) => {
@@ -533,7 +533,7 @@ impl App {
         }
     }
 
-    fn copy_plain_relative_path(&mut self) {
+    fn copy_relative_path(&mut self) {
         let selected = self.tree.selected_path();
         match format_relative_path(&self.startup_root, selected) {
             Ok(text) => {

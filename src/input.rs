@@ -17,7 +17,7 @@ pub fn map_event(key: KeyEvent) -> Option<Command> {
         (KeyCode::Tab, _) => Some(Command::ToggleTreeMode),
         (KeyCode::Char('?'), _) | (KeyCode::F(1), _) => Some(Command::ToggleHelp),
         (KeyCode::Char('t'), _) => Some(Command::ToggleHelpLanguage),
-        (KeyCode::Char('c'), _) => Some(Command::CopyRelativePath),
+        (KeyCode::Char('c'), _) => Some(Command::CopyAtRelativePath),
         (KeyCode::Char('o'), _) => Some(Command::OpenInFinder),
         _ => None,
     }
@@ -36,9 +36,9 @@ mod tests {
     }
 
     #[test]
-    fn c_maps_to_copy_relative_path() {
+    fn c_maps_to_copy_at_relative_path() {
         let event = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE);
-        assert!(matches!(map_event(event), Some(Command::CopyRelativePath)));
+        assert!(matches!(map_event(event), Some(Command::CopyAtRelativePath)));
     }
 
     #[test]

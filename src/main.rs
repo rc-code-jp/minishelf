@@ -137,7 +137,7 @@ fn run(
                         );
 
                         if is_double_click {
-                            app.handle_command(Command::CopyPlainRelativePath);
+                            app.handle_command(Command::CopyAtRelativePath);
                             last_left_click = None;
                         } else {
                             last_left_click = Some((now, mouse_event.column, mouse_event.row));
