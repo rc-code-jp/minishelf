@@ -248,15 +248,18 @@ impl App {
             }
             Command::ExpandOrOpen => {
                 if self.tree.selected_is_dir() {
+                    let visual_row =
+                        self.tree.selected_index().saturating_sub(self.tree_scroll);
                     if let Err(err) = self.tree.expand_selected() {
                         self.status_message = format!("expand failed: {err}");
                     }
-                    self.sync_tree_state();
+                    self.sync_tree_state_anchored(Some(visual_row));
                 }
             }
             Command::Collapse => {
+                let visual_row = self.tree.selected_index().saturating_sub(self.tree_scroll);
                 let _ = self.tree.collapse_selected();
-                self.sync_tree_state();
+                self.sync_tree_state_anchored(Some(visual_row));
             }
             Command::RefreshGit => self.request_git_refresh(true),
             Command::ToggleTreeMode => self.toggle_tree_mode(),
@@ -295,10 +298,11 @@ impl App {
             self.pending_fs_refresh = false;
             self.last_fs_event_at = None;
 
+            let visual_row = self.tree.selected_index().saturating_sub(self.tree_scroll);
             if let Err(err) = self.tree.refresh() {
                 self.status_message = format!("tree refresh failed: {err}");
             } else {
-                self.sync_tree_state();
+                self.sync_tree_state_anchored(Some(visual_row));
                 self.request_git_refresh(false);
             }
         }
@@ -307,10 +311,12 @@ impl App {
             match self.git_refresh_rx.try_recv() {
                 Ok(snapshot) => {
                     self.git = snapshot;
+                    let visual_row =
+                        self.tree.selected_index().saturating_sub(self.tree_scroll);
                     if let Err(err) = self.tree.update_changed_paths(&self.git) {
                         self.status_message = format!("tree refresh failed: {err}");
                     } else {
-                        self.sync_tree_state();
+                        self.sync_tree_state_anchored(Some(visual_row));
                     }
                     self.last_git_refresh = Instant::now();
                     self.git_refresh_in_flight = false;
@@ -357,12 +363,13 @@ impl App {
         self.pending_fs_refresh = false;
         self.last_fs_event_at = None;
 
+        let visual_row = self.tree.selected_index().saturating_sub(self.tree_scroll);
         if let Err(err) = self.tree.refresh() {
             self.status_message = format!("tree refresh failed: {err}");
             return;
         }
 
-        self.sync_tree_state();
+        self.sync_tree_state_anchored(Some(visual_row));
         self.request_git_refresh(false);
     }
 
@@ -501,12 +508,13 @@ impl App {
             TreeMode::Changed => TreeMode::Normal,
         };
 
+        let visual_row = self.tree.selected_index().saturating_sub(self.tree_scroll);
         if let Err(err) = self.tree.set_mode(next_mode, &self.git) {
             self.set_temporary_status(format!("tree mode switch failed: {err}"));
             return;
         }
 
-        self.sync_tree_state();
+        self.sync_tree_state_anchored(Some(visual_row));
         self.set_temporary_status(self.tree_mode_status_message());
     }
 
@@ -658,7 +666,11 @@ impl App {
         );
     }
 
-    fn sync_tree_state(&mut self) {
+    fn sync_tree_state_anchored(&mut self, anchor_visual_row: Option<usize>) {
+        if let Some(visual_row) = anchor_visual_row {
+            let selected = self.tree.selected_index();
+            self.tree_scroll = selected.saturating_sub(visual_row);
+        }
         self.clamp_tree_scroll();
         self.ensure_tree_selection_visible();
         self.refresh_visible_ignored_paths();
@@ -667,6 +679,7 @@ impl App {
             .filter(|index| *index < self.tree.entries.len());
         self.update_changed_empty_status();
     }
+
 
     fn tree_mode_status_message(&self) -> String {
         if self.tree.mode == TreeMode::Changed && self.tree.entries.is_empty() {
