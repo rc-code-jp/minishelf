@@ -248,18 +248,17 @@ impl App {
             }
             Command::ExpandOrOpen => {
                 if self.tree.selected_is_dir() {
-                    let visual_row =
-                        self.tree.selected_index().saturating_sub(self.tree_scroll);
+                    let anchor = self.selection_visual_row();
                     if let Err(err) = self.tree.expand_selected() {
                         self.status_message = format!("expand failed: {err}");
                     }
-                    self.sync_tree_state_anchored(Some(visual_row));
+                    self.sync_tree_state_anchored(anchor);
                 }
             }
             Command::Collapse => {
-                let visual_row = self.tree.selected_index().saturating_sub(self.tree_scroll);
+                let anchor = self.selection_visual_row();
                 let _ = self.tree.collapse_selected();
-                self.sync_tree_state_anchored(Some(visual_row));
+                self.sync_tree_state_anchored(anchor);
             }
             Command::RefreshGit => self.request_git_refresh(true),
             Command::ToggleTreeMode => self.toggle_tree_mode(),
@@ -298,11 +297,11 @@ impl App {
             self.pending_fs_refresh = false;
             self.last_fs_event_at = None;
 
-            let visual_row = self.tree.selected_index().saturating_sub(self.tree_scroll);
+            let anchor = self.selection_visual_row();
             if let Err(err) = self.tree.refresh() {
                 self.status_message = format!("tree refresh failed: {err}");
             } else {
-                self.sync_tree_state_anchored(Some(visual_row));
+                self.sync_tree_state_anchored(anchor);
                 self.request_git_refresh(false);
             }
         }
@@ -311,12 +310,11 @@ impl App {
             match self.git_refresh_rx.try_recv() {
                 Ok(snapshot) => {
                     self.git = snapshot;
-                    let visual_row =
-                        self.tree.selected_index().saturating_sub(self.tree_scroll);
+                    let anchor = self.selection_visual_row();
                     if let Err(err) = self.tree.update_changed_paths(&self.git) {
                         self.status_message = format!("tree refresh failed: {err}");
                     } else {
-                        self.sync_tree_state_anchored(Some(visual_row));
+                        self.sync_tree_state_anchored(anchor);
                     }
                     self.last_git_refresh = Instant::now();
                     self.git_refresh_in_flight = false;
@@ -363,13 +361,13 @@ impl App {
         self.pending_fs_refresh = false;
         self.last_fs_event_at = None;
 
-        let visual_row = self.tree.selected_index().saturating_sub(self.tree_scroll);
+        let anchor = self.selection_visual_row();
         if let Err(err) = self.tree.refresh() {
             self.status_message = format!("tree refresh failed: {err}");
             return;
         }
 
-        self.sync_tree_state_anchored(Some(visual_row));
+        self.sync_tree_state_anchored(anchor);
         self.request_git_refresh(false);
     }
 
@@ -508,13 +506,13 @@ impl App {
             TreeMode::Changed => TreeMode::Normal,
         };
 
-        let visual_row = self.tree.selected_index().saturating_sub(self.tree_scroll);
+        let anchor = self.selection_visual_row();
         if let Err(err) = self.tree.set_mode(next_mode, &self.git) {
             self.set_temporary_status(format!("tree mode switch failed: {err}"));
             return;
         }
 
-        self.sync_tree_state_anchored(Some(visual_row));
+        self.sync_tree_state_anchored(anchor);
         self.set_temporary_status(self.tree_mode_status_message());
     }
 
@@ -666,13 +664,27 @@ impl App {
         );
     }
 
+    fn selection_visual_row(&self) -> Option<usize> {
+        let selected = self.tree.selected_index();
+        let viewport_end = self
+            .tree_scroll
+            .saturating_add(self.tree_viewport_height);
+        if selected >= self.tree_scroll && selected < viewport_end {
+            Some(selected - self.tree_scroll)
+        } else {
+            None
+        }
+    }
+
     fn sync_tree_state_anchored(&mut self, anchor_visual_row: Option<usize>) {
         if let Some(visual_row) = anchor_visual_row {
             let selected = self.tree.selected_index();
             self.tree_scroll = selected.saturating_sub(visual_row);
         }
         self.clamp_tree_scroll();
-        self.ensure_tree_selection_visible();
+        if anchor_visual_row.is_some() {
+            self.ensure_tree_selection_visible();
+        }
         self.refresh_visible_ignored_paths();
         self.hovered_tree_index = self
             .hovered_tree_index
