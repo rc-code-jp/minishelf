@@ -31,7 +31,6 @@ pub struct DirEntryNode {
     pub is_dir: bool,
     pub is_symlink: bool,
     pub exists_on_disk: bool,
-    pub size_bytes: Option<u64>,
     pub modified_date: Option<String>,
     pub depth: usize,
     pub is_expanded: bool,
@@ -314,14 +313,13 @@ fn read_directory_entries(
             }
 
             let name = entry.file_name().to_string_lossy().to_string();
-            let (size_bytes, modified_date) = load_entry_metadata(&entry, is_dir);
+            let modified_date = load_entry_modified_date(&entry);
             entries.push(DirEntryNode {
                 path,
                 name,
                 is_dir,
                 is_symlink: file_type.is_symlink(),
                 exists_on_disk: true,
-                size_bytes,
                 modified_date,
                 depth: 0,
                 is_expanded: false,
@@ -388,7 +386,6 @@ fn collect_deleted_entries(
                 is_dir,
                 is_symlink: false,
                 exists_on_disk: false,
-                size_bytes: None,
                 modified_date: None,
                 depth: 0,
                 is_expanded: false,
@@ -424,15 +421,13 @@ fn is_changed_visible(path: &Path, is_dir: bool, changed_paths: &HashSet<PathBuf
     }
 }
 
-fn load_entry_metadata(entry: &fs::DirEntry, is_dir: bool) -> (Option<u64>, Option<String>) {
+fn load_entry_modified_date(entry: &fs::DirEntry) -> Option<String> {
     let metadata = match entry.metadata() {
         Ok(metadata) => metadata,
-        Err(_) => return (None, None),
+        Err(_) => return None,
     };
 
-    let size_bytes = if is_dir { None } else { Some(metadata.len()) };
-    let modified_date = metadata.modified().ok().and_then(format_system_time_date);
-    (size_bytes, modified_date)
+    metadata.modified().ok().and_then(format_system_time_date)
 }
 
 fn format_system_time_date(time: SystemTime) -> Option<String> {
@@ -725,7 +720,7 @@ mod tests {
     }
 
     #[test]
-    fn tree_collects_file_size_and_modified_date() {
+    fn tree_collects_modified_date() {
         let tmp = tempdir().expect("tmpdir should exist");
         let root = tmp.path().join("root");
         fs::create_dir_all(&root).expect("create root should work");
@@ -739,12 +734,11 @@ mod tests {
             .find(|entry| entry.name == "note.txt")
             .expect("note.txt should exist");
 
-        assert_eq!(file.size_bytes, Some(5));
         assert_eq!(file.modified_date.as_deref().map(str::len), Some(10));
     }
 
     #[test]
-    fn tree_uses_empty_size_for_directories() {
+    fn tree_collects_modified_date_for_directories() {
         let tmp = tempdir().expect("tmpdir should exist");
         let root = tmp.path().join("root");
         fs::create_dir_all(root.join("sub")).expect("create dir should work");
@@ -757,7 +751,6 @@ mod tests {
             .find(|entry| entry.name == "sub")
             .expect("sub should exist");
 
-        assert_eq!(dir.size_bytes, None);
         assert!(dir.modified_date.is_some());
     }
 

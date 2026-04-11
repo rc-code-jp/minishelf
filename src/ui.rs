@@ -114,7 +114,7 @@ fn render_tree(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .entries
         .len()
         .min(scroll_offset.saturating_add(viewport_height.max(1)));
-    let columns = tree_columns(inner_width, &app.tree.entries);
+    let columns = tree_columns(inner_width);
 
     let mut lines = Vec::with_capacity(end_index.saturating_sub(scroll_offset));
     for (absolute_index, node) in app.tree.entries[scroll_offset..end_index]
@@ -154,47 +154,28 @@ fn render_tree(frame: &mut Frame<'_>, app: &App, area: Rect) {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TreeColumns {
     name_width: usize,
-    size_width: Option<usize>,
     date_width: Option<usize>,
 }
 
-fn tree_columns(inner_width: usize, entries: &[DirEntryNode]) -> TreeColumns {
+fn tree_columns(inner_width: usize) -> TreeColumns {
     if inner_width == 0 {
         return TreeColumns {
             name_width: 0,
-            size_width: None,
             date_width: None,
         };
     }
 
-    let size_width = entries
-        .iter()
-        .map(tree_size_text)
-        .map(|text| text.chars().count())
-        .max()
-        .unwrap_or(1);
     let min_name_width = TREE_MIN_NAME_WIDTH.min(inner_width);
-    let both_required = min_name_width + size_width + TREE_DATE_WIDTH + TREE_COLUMN_GAP * 2;
-    if inner_width >= both_required {
+    let date_required = min_name_width + TREE_DATE_WIDTH + TREE_COLUMN_GAP;
+    if inner_width >= date_required {
         return TreeColumns {
-            name_width: inner_width - size_width - TREE_DATE_WIDTH - TREE_COLUMN_GAP * 2,
-            size_width: Some(size_width),
+            name_width: inner_width - TREE_DATE_WIDTH - TREE_COLUMN_GAP,
             date_width: Some(TREE_DATE_WIDTH),
-        };
-    }
-
-    let size_required = min_name_width + size_width + TREE_COLUMN_GAP;
-    if inner_width >= size_required {
-        return TreeColumns {
-            name_width: inner_width - size_width - TREE_COLUMN_GAP,
-            size_width: Some(size_width),
-            date_width: None,
         };
     }
 
     TreeColumns {
         name_width: inner_width,
-        size_width: None,
         date_width: None,
     }
 }
@@ -211,14 +192,6 @@ fn render_tree_line(
         columns.name_width,
     );
     spans.push(Span::styled(name_text, style));
-
-    if let Some(size_width) = columns.size_width {
-        spans.push(Span::styled(" ".repeat(TREE_COLUMN_GAP), style));
-        spans.push(Span::styled(
-            format!("{:>width$}", tree_size_text(node), width = size_width),
-            tree_meta_style(is_selected),
-        ));
-    }
 
     if let Some(date_width) = columns.date_width {
         spans.push(Span::styled(" ".repeat(TREE_COLUMN_GAP), style));
@@ -251,31 +224,6 @@ fn tree_name_text(node: &DirEntryNode) -> String {
     }
 
     format!("{indent}{marker} {}", node.name)
-}
-
-fn tree_size_text(node: &DirEntryNode) -> String {
-    if node.is_dir {
-        return String::from("-");
-    }
-
-    node.size_bytes.map(format_bytes).unwrap_or_default()
-}
-
-fn format_bytes(size_bytes: u64) -> String {
-    let units = ["B", "K", "M", "G", "T", "P"];
-    let mut value = size_bytes as f64;
-    let mut unit_index = 0;
-    while value >= 1024.0 && unit_index + 1 < units.len() {
-        value /= 1024.0;
-        unit_index += 1;
-    }
-
-    let unit = units[unit_index];
-    if unit_index == 0 || value >= 10.0 {
-        format!("{value:.0}{unit}")
-    } else {
-        format!("{value:.1}{unit}")
-    }
 }
 
 fn tree_marker(node: &DirEntryNode) -> &'static str {
@@ -547,9 +495,8 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        format_bytes, help_entry, help_max_scroll, tree_area, tree_columns, tree_contains,
-        tree_index_at, tree_max_scroll, tree_name_text, tree_scroll_offset, tree_size_text,
-        DirEntryNode,
+        help_entry, help_max_scroll, tree_area, tree_columns, tree_contains, tree_index_at,
+        tree_max_scroll, tree_name_text, tree_scroll_offset, DirEntryNode,
     };
     use crate::app::App;
     use crate::config::HelpLanguage;
@@ -580,45 +527,25 @@ mod tests {
     }
 
     #[test]
-    fn tree_columns_show_name_size_and_date_when_wide_enough() {
-        let entries = vec![sample_node(
-            "note.txt",
-            false,
-            Some(1_024),
-            Some("2026-03-20"),
-        )];
-        let columns = tree_columns(40, &entries);
+    fn tree_columns_show_name_and_date_when_wide_enough() {
+        let columns = tree_columns(40);
 
-        assert_eq!(columns.size_width, Some(4));
         assert_eq!(columns.date_width, Some(10));
-        assert_eq!(columns.name_width, 22);
+        assert_eq!(columns.name_width, 28);
     }
 
     #[test]
-    fn tree_columns_hide_date_before_size() {
-        let entries = vec![sample_node(
-            "note.txt",
-            false,
-            Some(1_024),
-            Some("2026-03-20"),
-        )];
-        let columns = tree_columns(18, &entries);
+    fn tree_columns_hide_date_when_too_narrow() {
+        let columns = tree_columns(18);
 
-        assert_eq!(columns.size_width, Some(4));
         assert_eq!(columns.date_width, None);
+        assert_eq!(columns.name_width, 18);
     }
 
     #[test]
     fn tree_columns_hide_all_metadata_when_too_narrow() {
-        let entries = vec![sample_node(
-            "note.txt",
-            false,
-            Some(1_024),
-            Some("2026-03-20"),
-        )];
-        let columns = tree_columns(8, &entries);
+        let columns = tree_columns(8);
 
-        assert_eq!(columns.size_width, None);
         assert_eq!(columns.date_width, None);
         assert_eq!(columns.name_width, 8);
     }
@@ -692,40 +619,21 @@ mod tests {
     }
 
     #[test]
-    fn format_bytes_uses_compact_units() {
-        assert_eq!(format_bytes(812), "812B");
-        assert_eq!(format_bytes(2_048), "2.0K");
-        assert_eq!(format_bytes(10 * 1024 * 1024), "10M");
-    }
-
-    #[test]
-    fn tree_size_text_uses_dash_for_directories() {
-        let dir = sample_node("src", true, None, Some("2026-03-20"));
-        assert_eq!(tree_size_text(&dir), "-");
-    }
-
-    #[test]
     fn tree_name_text_shows_indent_and_marker_for_directory() {
-        let mut dir = sample_node("src", true, None, Some("2026-03-20"));
+        let mut dir = sample_node("src", true, Some("2026-03-20"));
         dir.depth = 2;
         dir.is_expanded = true;
 
         assert_eq!(tree_name_text(&dir), "    ▼ src/");
     }
 
-    fn sample_node(
-        name: &str,
-        is_dir: bool,
-        size_bytes: Option<u64>,
-        modified_date: Option<&str>,
-    ) -> DirEntryNode {
+    fn sample_node(name: &str, is_dir: bool, modified_date: Option<&str>) -> DirEntryNode {
         DirEntryNode {
             path: PathBuf::from(name),
             name: name.to_string(),
             is_dir,
             is_symlink: false,
             exists_on_disk: true,
-            size_bytes,
             modified_date: modified_date.map(str::to_string),
             depth: 0,
             is_expanded: false,
