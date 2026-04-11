@@ -142,7 +142,6 @@ pub enum Command {
     ToggleHelp,
     ToggleHelpLanguage,
     CopyAtRelativePath,
-    CopyRelativePath,
     OpenInFinder,
     Quit,
 }
@@ -268,7 +267,6 @@ impl App {
             }
             Command::ToggleHelpLanguage => {}
             Command::CopyAtRelativePath => self.copy_at_relative_path(),
-            Command::CopyRelativePath => self.copy_relative_path(),
             Command::OpenInFinder => self.open_in_finder(),
             Command::Quit => self.should_quit = true,
         }
@@ -666,9 +664,7 @@ impl App {
 
     fn selection_visual_row(&self) -> Option<usize> {
         let selected = self.tree.selected_index();
-        let viewport_end = self
-            .tree_scroll
-            .saturating_add(self.tree_viewport_height);
+        let viewport_end = self.tree_scroll.saturating_add(self.tree_viewport_height);
         if selected >= self.tree_scroll && selected < viewport_end {
             Some(selected - self.tree_scroll)
         } else {
@@ -691,7 +687,6 @@ impl App {
             .filter(|index| *index < self.tree.entries.len());
         self.update_changed_empty_status();
     }
-
 
     fn tree_mode_status_message(&self) -> String {
         if self.tree.mode == TreeMode::Changed && self.tree.entries.is_empty() {

@@ -38,7 +38,10 @@ mod tests {
     #[test]
     fn c_maps_to_copy_at_relative_path() {
         let event = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE);
-        assert!(matches!(map_event(event), Some(Command::CopyAtRelativePath)));
+        assert!(matches!(
+            map_event(event),
+            Some(Command::CopyAtRelativePath)
+        ));
     }
 
     #[test]
