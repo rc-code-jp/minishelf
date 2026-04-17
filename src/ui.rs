@@ -310,7 +310,8 @@ fn help_content(language: HelpLanguage) -> (&'static str, Vec<Line<'static>>) {
             lines.extend(help_section("Navigation"));
             lines.extend(help_entry("j / k, Down / Up", "Move selection"));
             lines.extend(help_entry("h / Left", "Collapse dir or move to parent"));
-            lines.extend(help_entry("l / Right / Enter", "Toggle selected directory"));
+            lines.extend(help_entry("l / Right", "Toggle selected directory"));
+            lines.extend(help_entry("Enter", "Toggle directory, copy file path"));
             lines.extend(help_entry("Left click", "Select files, toggle directories"));
             lines.extend(help_entry("Right click", "Open copy menu"));
             lines.extend(help_entry("Mouse wheel on tree", "Scroll tree by 3 lines"));
@@ -336,7 +337,11 @@ fn help_content(language: HelpLanguage) -> (&'static str, Vec<Line<'static>>) {
                 "h / Left",
                 "ディレクトリを閉じる、または親へ移動",
             ));
-            lines.extend(help_entry("l / Right / Enter", "選択ディレクトリを開閉"));
+            lines.extend(help_entry("l / Right", "選択ディレクトリを開閉"));
+            lines.extend(help_entry(
+                "Enter",
+                "ディレクトリは開閉、ファイルはパスをコピー",
+            ));
             lines.extend(help_entry(
                 "左クリック",
                 "ファイルを選択し、ディレクトリなら開閉",

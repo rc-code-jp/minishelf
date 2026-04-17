@@ -9,9 +9,8 @@ pub fn map_event(key: KeyEvent) -> Option<Command> {
         (KeyCode::Esc, _) => Some(Command::Quit),
         (KeyCode::Char('k'), _) | (KeyCode::Up, _) => Some(Command::MoveUp),
         (KeyCode::Char('j'), _) | (KeyCode::Down, _) => Some(Command::MoveDown),
-        (KeyCode::Char('l'), _) | (KeyCode::Right, _) | (KeyCode::Enter, _) => {
-            Some(Command::ExpandOrOpen)
-        }
+        (KeyCode::Char('l'), _) | (KeyCode::Right, _) => Some(Command::ExpandOrOpen),
+        (KeyCode::Enter, _) => Some(Command::ActivateSelected),
         (KeyCode::Char('h'), _) | (KeyCode::Left, _) => Some(Command::Collapse),
         (KeyCode::Char('r'), _) => Some(Command::RefreshGit),
         (KeyCode::Tab, _) => Some(Command::ToggleTreeMode),
@@ -42,6 +41,12 @@ mod tests {
             map_event(event),
             Some(Command::CopyAtRelativePath)
         ));
+    }
+
+    #[test]
+    fn enter_maps_to_activate_selected() {
+        let event = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        assert!(matches!(map_event(event), Some(Command::ActivateSelected)));
     }
 
     #[test]

@@ -135,6 +135,7 @@ pub struct App {
 pub enum Command {
     MoveUp,
     MoveDown,
+    ActivateSelected,
     ExpandOrOpen,
     Collapse,
     RefreshGit,
@@ -216,7 +217,9 @@ impl App {
                         menu.move_down();
                     }
                 }
-                Command::ExpandOrOpen => self.execute_context_menu_selection(),
+                Command::ActivateSelected | Command::ExpandOrOpen => {
+                    self.execute_context_menu_selection()
+                }
                 Command::Quit | Command::Collapse => self.context_menu = None,
                 _ => {}
             }
@@ -237,6 +240,7 @@ impl App {
         }
 
         match command {
+            Command::ActivateSelected => self.activate_selected(),
             Command::MoveUp => {
                 self.tree.move_up();
                 self.ensure_tree_selection_visible();
@@ -269,6 +273,18 @@ impl App {
             Command::CopyAtRelativePath => self.copy_at_relative_path(),
             Command::OpenInFinder => self.open_in_finder(),
             Command::Quit => self.should_quit = true,
+        }
+    }
+
+    fn activate_selected(&mut self) {
+        if self.tree.selected_is_dir() {
+            let anchor = self.selection_visual_row();
+            if let Err(err) = self.tree.expand_selected() {
+                self.status_message = format!("expand failed: {err}");
+            }
+            self.sync_tree_state_anchored(anchor);
+        } else {
+            self.copy_at_relative_path();
         }
     }
 
@@ -829,6 +845,42 @@ mod tests {
             app.tree.selected_path(),
             tmp.path().join("note.txt").as_path()
         );
+    }
+
+    #[test]
+    fn activate_selected_copies_file_path() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        fs::write(tmp.path().join("note.txt"), "hello").expect("write should succeed");
+
+        let mut app =
+            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
+        app.clipboard = None;
+        select_by_file_name(&mut app, "note.txt");
+
+        app.handle_command(Command::ActivateSelected);
+
+        assert_eq!(app.status_message, "clipboard unavailable");
+        assert_eq!(
+            app.tree.selected_path(),
+            tmp.path().join("note.txt").as_path()
+        );
+    }
+
+    #[test]
+    fn activate_selected_toggles_directory() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        fs::create_dir_all(tmp.path().join("sub")).expect("sub dir should create");
+        fs::write(tmp.path().join("sub/note.txt"), "hello").expect("write should succeed");
+
+        let mut app =
+            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
+        select_by_file_name(&mut app, "sub");
+        assert_eq!(app.tree.entries.len(), 1);
+
+        app.handle_command(Command::ActivateSelected);
+
+        assert_eq!(app.tree.entries.len(), 2);
+        assert_eq!(app.tree.selected_path(), tmp.path().join("sub").as_path());
     }
 
     #[test]
