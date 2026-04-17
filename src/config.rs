@@ -16,12 +16,20 @@ pub enum HelpLanguage {
 pub struct Config {
     #[serde(default)]
     pub help: HelpConfig,
+    #[serde(default)]
+    pub copy: CopyConfig,
 }
 
 #[derive(Debug, Default, Deserialize)]
 pub struct HelpConfig {
     #[serde(default)]
     pub language: HelpLanguage,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct CopyConfig {
+    #[serde(default, deserialize_with = "deserialize_optional_path")]
+    pub after_copy_hook: Option<PathBuf>,
 }
 
 impl Config {
@@ -61,6 +69,16 @@ impl Config {
     }
 }
 
+fn deserialize_optional_path<'de, D>(deserializer: D) -> Result<Option<PathBuf>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<String>::deserialize(deserializer)?;
+    Ok(value
+        .filter(|path| !path.trim().is_empty())
+        .map(PathBuf::from))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Config, HelpLanguage};
@@ -83,5 +101,41 @@ language = "ja"
         .expect("config should parse");
 
         assert_eq!(config.help.language, HelpLanguage::Ja);
+    }
+
+    #[test]
+    fn after_copy_hook_defaults_to_none() {
+        let config = Config::default();
+
+        assert_eq!(config.copy.after_copy_hook, None);
+    }
+
+    #[test]
+    fn after_copy_hook_can_be_loaded_from_config() {
+        let config: Config = toml::from_str(
+            r#"
+[copy]
+after_copy_hook = "/Users/rc/bin/after-copy"
+"#,
+        )
+        .expect("config should parse");
+
+        assert_eq!(
+            config.copy.after_copy_hook.as_deref(),
+            Some(std::path::Path::new("/Users/rc/bin/after-copy"))
+        );
+    }
+
+    #[test]
+    fn empty_after_copy_hook_is_ignored() {
+        let config: Config = toml::from_str(
+            r#"
+[copy]
+after_copy_hook = ""
+"#,
+        )
+        .expect("config should parse");
+
+        assert_eq!(config.copy.after_copy_hook, None);
     }
 }

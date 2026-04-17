@@ -1,10 +1,11 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::process::Command as ProcessCommand;
+use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use anyhow::Context;
 use arboard::Clipboard;
 use notify::{RecursiveMode, Watcher};
 use ratatui::layout::Rect;
@@ -129,6 +130,7 @@ pub struct App {
     last_fs_event_at: Option<Instant>,
     tree_scroll: usize,
     tree_viewport_height: usize,
+    after_copy_hook: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -151,6 +153,7 @@ impl App {
     pub fn new(startup_root: PathBuf, initial_tree_mode: TreeMode) -> anyhow::Result<Self> {
         let config = Config::load();
         let help_language = config.help.language;
+        let after_copy_hook = config.copy.after_copy_hook;
         let git = GitSnapshot::collect(&startup_root);
         let tree = Tree::new(startup_root.clone(), initial_tree_mode, &git)?;
         let visible_ignored_paths = collect_ignored_paths(
@@ -197,6 +200,7 @@ impl App {
             last_fs_event_at: None,
             tree_scroll: 0,
             tree_viewport_height: 1,
+            after_copy_hook,
         };
         app.update_changed_empty_status();
         Ok(app)
@@ -461,7 +465,7 @@ impl App {
                 let text = format!("{command} {rel_path}");
                 if let Some(clipboard) = self.clipboard.as_mut() {
                     match clipboard.set_text(text.clone()) {
-                        Ok(()) => self.set_temporary_status(format!("copied: {text}")),
+                        Ok(()) => self.set_copied_status(&text),
                         Err(err) => self.set_temporary_status(format!("copy failed: {err}")),
                     }
                 } else {
@@ -536,7 +540,7 @@ impl App {
             Ok(text) => {
                 if let Some(clipboard) = self.clipboard.as_mut() {
                     match clipboard.set_text(text.clone()) {
-                        Ok(()) => self.set_temporary_status(format!("copied: {text}")),
+                        Ok(()) => self.set_copied_status(&text),
                         Err(err) => self.set_temporary_status(format!("copy failed: {err}")),
                     }
                 } else {
@@ -553,7 +557,7 @@ impl App {
             Ok(text) => {
                 if let Some(clipboard) = self.clipboard.as_mut() {
                     match clipboard.set_text(text.clone()) {
-                        Ok(()) => self.set_temporary_status(format!("copied: {text}")),
+                        Ok(()) => self.set_copied_status(&text),
                         Err(err) => self.set_temporary_status(format!("copy failed: {err}")),
                     }
                 } else {
@@ -621,6 +625,21 @@ impl App {
     fn set_temporary_status(&mut self, msg: impl Into<String>) {
         self.status_message = msg.into();
         self.status_expires_at = Some(Instant::now() + COPY_STATUS_DURATION);
+    }
+
+    fn set_copied_status(&mut self, text: &str) {
+        match self.run_after_copy_hook() {
+            Ok(()) => self.set_temporary_status(format!("copied: {text}")),
+            Err(err) => self.set_temporary_status(format!("copied: {text} | hook failed: {err}")),
+        }
+    }
+
+    fn run_after_copy_hook(&self) -> anyhow::Result<()> {
+        let Some(path) = self.after_copy_hook.as_deref() else {
+            return Ok(());
+        };
+
+        spawn_copy_hook(path)
     }
 
     pub fn tree_scroll(&self) -> usize {
@@ -786,6 +805,16 @@ fn finder_open_command(path: &Path) -> ProcessCommand {
     }
 }
 
+fn spawn_copy_hook(path: &Path) -> anyhow::Result<()> {
+    ProcessCommand::new(path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .with_context(|| format!("failed to start {}", path.display()))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -802,8 +831,8 @@ mod tests {
     use crate::ui;
 
     use super::{
-        format_relative_with_at, resolve_directory_to_open, App, Command, FS_REFRESH_DEBOUNCE,
-        TREE_WHEEL_SCROLL_AMOUNT,
+        format_relative_with_at, resolve_directory_to_open, spawn_copy_hook, App, Command,
+        FS_REFRESH_DEBOUNCE, TREE_WHEEL_SCROLL_AMOUNT,
     };
 
     #[test]
@@ -826,6 +855,62 @@ mod tests {
         let root = Path::new("/repo");
         let outside = Path::new("/other/file.txt");
         assert!(format_relative_with_at(root, outside).is_err());
+    }
+
+    #[test]
+    fn copied_status_stays_simple_without_hook() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        let mut app =
+            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
+        app.after_copy_hook = None;
+
+        app.set_copied_status("@note.txt");
+
+        assert_eq!(app.status_message, "copied: @note.txt");
+    }
+
+    #[test]
+    fn copied_status_keeps_copy_message_when_hook_fails_to_start() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        let mut app =
+            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
+        app.after_copy_hook = Some(tmp.path().join("missing-hook"));
+
+        app.set_copied_status("@note.txt");
+
+        assert!(app.status_message.starts_with("copied: @note.txt"));
+        assert!(app.status_message.contains("hook failed:"));
+    }
+
+    #[test]
+    fn copy_failure_does_not_run_after_copy_hook() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        let mut app =
+            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
+        app.clipboard = None;
+        app.after_copy_hook = Some(tmp.path().join("missing-hook"));
+
+        app.handle_command(Command::CopyAtRelativePath);
+
+        assert_eq!(app.status_message, "clipboard unavailable");
+    }
+
+    #[test]
+    fn spawn_copy_hook_accepts_executable_path() {
+        let true_path = ["/bin/true", "/usr/bin/true"]
+            .iter()
+            .map(Path::new)
+            .find(|path| path.exists())
+            .expect("true command should exist");
+
+        assert!(spawn_copy_hook(true_path).is_ok());
+    }
+
+    #[test]
+    fn spawn_copy_hook_reports_missing_path() {
+        let tmp = tempdir().expect("tmpdir should exist");
+
+        assert!(spawn_copy_hook(&tmp.path().join("missing-hook")).is_err());
     }
 
     #[test]
@@ -1245,13 +1330,14 @@ mod tests {
         fs::write(tmp.path().join("a.txt"), "a").expect("write should succeed");
         let mut app =
             App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
+        app.after_copy_hook = None;
         let terminal_area = Rect::new(0, 0, 40, 10);
         let tree_area = ui::tree_area(terminal_area, &app);
 
         app.handle_tree_right_click(terminal_area, tree_area.x + 1, tree_area.y + 1);
         assert!(app.context_menu.is_some());
 
-        // Execute first item (@ copy)
+        // 先頭項目を実行する（@ copy）
         app.handle_command(Command::ExpandOrOpen);
         assert!(app.context_menu.is_none());
         assert!(app.status_message.starts_with("copied: @"));
