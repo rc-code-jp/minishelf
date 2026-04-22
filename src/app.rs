@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::process::{Command as ProcessCommand, Stdio};
+use std::process::{Child, Command as ProcessCommand, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -131,6 +131,9 @@ pub struct App {
     tree_scroll: usize,
     tree_viewport_height: usize,
     after_copy_hook: Option<PathBuf>,
+    after_copy_hook_done_tx: Sender<()>,
+    after_copy_hook_done_rx: Receiver<()>,
+    after_copy_hook_in_flight: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -162,6 +165,7 @@ impl App {
         );
         let (git_refresh_tx, git_refresh_rx) = mpsc::channel();
         let (fs_refresh_tx, fs_refresh_rx) = mpsc::channel();
+        let (after_copy_hook_done_tx, after_copy_hook_done_rx) = mpsc::channel();
 
         let mut fs_watcher =
             notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
@@ -201,6 +205,9 @@ impl App {
             tree_scroll: 0,
             tree_viewport_height: 1,
             after_copy_hook,
+            after_copy_hook_done_tx,
+            after_copy_hook_done_rx,
+            after_copy_hook_in_flight: false,
         };
         app.update_changed_empty_status();
         Ok(app)
@@ -351,6 +358,10 @@ impl App {
                     break;
                 }
             }
+        }
+
+        while let Ok(()) = self.after_copy_hook_done_rx.try_recv() {
+            self.after_copy_hook_in_flight = false;
         }
     }
 
@@ -634,12 +645,20 @@ impl App {
         }
     }
 
-    fn run_after_copy_hook(&self) -> anyhow::Result<()> {
+    fn run_after_copy_hook(&mut self) -> anyhow::Result<()> {
         let Some(path) = self.after_copy_hook.as_deref() else {
             return Ok(());
         };
 
-        spawn_copy_hook(path)
+        if self.after_copy_hook_in_flight {
+            return Ok(());
+        }
+
+        let child = spawn_copy_hook(path)?;
+        self.after_copy_hook_in_flight = true;
+        let tx = self.after_copy_hook_done_tx.clone();
+        thread::spawn(move || wait_for_copy_hook(child, tx));
+        Ok(())
     }
 
     pub fn tree_scroll(&self) -> usize {
@@ -805,14 +824,18 @@ fn finder_open_command(path: &Path) -> ProcessCommand {
     }
 }
 
-fn spawn_copy_hook(path: &Path) -> anyhow::Result<()> {
+fn spawn_copy_hook(path: &Path) -> anyhow::Result<Child> {
     ProcessCommand::new(path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .with_context(|| format!("failed to start {}", path.display()))?;
-    Ok(())
+        .with_context(|| format!("failed to start {}", path.display()))
+}
+
+fn wait_for_copy_hook(mut child: Child, done_tx: Sender<()>) {
+    let _ = child.wait();
+    let _ = done_tx.send(());
 }
 
 #[cfg(test)]
@@ -883,6 +906,35 @@ mod tests {
     }
 
     #[test]
+    fn copied_status_skips_hook_while_previous_hook_is_running() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        let mut app =
+            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
+        app.after_copy_hook = Some(tmp.path().join("missing-hook"));
+        app.after_copy_hook_in_flight = true;
+
+        app.set_copied_status("@note.txt");
+
+        assert_eq!(app.status_message, "copied: @note.txt");
+        assert!(app.after_copy_hook_in_flight);
+    }
+
+    #[test]
+    fn after_copy_hook_in_flight_clears_when_background_wait_finishes() {
+        let tmp = tempdir().expect("tmpdir should exist");
+        let mut app =
+            App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
+        app.after_copy_hook_in_flight = true;
+        app.after_copy_hook_done_tx
+            .send(())
+            .expect("completion signal should send");
+
+        app.poll_background_tasks();
+
+        assert!(!app.after_copy_hook_in_flight);
+    }
+
+    #[test]
     fn copy_failure_does_not_run_after_copy_hook() {
         let tmp = tempdir().expect("tmpdir should exist");
         let mut app =
@@ -903,7 +955,8 @@ mod tests {
             .find(|path| path.exists())
             .expect("true command should exist");
 
-        assert!(spawn_copy_hook(true_path).is_ok());
+        let mut child = spawn_copy_hook(true_path).expect("hook should spawn");
+        assert!(child.wait().expect("hook should exit").success());
     }
 
     #[test]

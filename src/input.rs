@@ -1,8 +1,12 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::app::Command;
 
 pub fn map_event(key: KeyEvent) -> Option<Command> {
+    if key.kind != KeyEventKind::Press {
+        return None;
+    }
+
     match (key.code, key.modifiers) {
         (KeyCode::Char('q'), _) => Some(Command::Quit),
         (KeyCode::Char('c'), KeyModifiers::CONTROL) => Some(Command::Quit),
@@ -26,7 +30,7 @@ pub fn map_event(key: KeyEvent) -> Option<Command> {
 mod tests {
     use super::map_event;
     use crate::app::Command;
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
     #[test]
     fn esc_maps_to_quit() {
@@ -68,5 +72,13 @@ mod tests {
     fn tab_maps_to_toggle_tree_mode() {
         let event = KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE);
         assert!(matches!(map_event(event), Some(Command::ToggleTreeMode)));
+    }
+
+    #[test]
+    fn repeat_is_ignored() {
+        let mut event = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE);
+        event.kind = KeyEventKind::Repeat;
+
+        assert!(map_event(event).is_none());
     }
 }
