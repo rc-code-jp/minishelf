@@ -34,7 +34,7 @@ nix run github:rc-code-jp/pocoshelf -- .
 ユーザープロファイルにインストールする場合:
 
 ```bash
-nix profile install github:rc-code-jp/pocoshelf
+nix profile add github:rc-code-jp/pocoshelf
 ```
 
 `nix-darwin` / `home-manager` の flake input として管理する場合は、設定リポジトリ側の `flake.nix` に input を追加します。
