@@ -56,7 +56,7 @@
                 pkgs.xorg.libxcb
               ]
               ++ lib.optionals stdenv.isDarwin (
-                with pkgs.darwin.apple_sdk.frameworks;
+                with pkgs.darwin.apple_sdk_15.frameworks;
                 [
                   AppKit
                   CoreFoundation
