@@ -55,14 +55,9 @@
                 pkgs.xorg.libX11
                 pkgs.xorg.libxcb
               ]
-              ++ lib.optionals stdenv.isDarwin (
-                with pkgs.darwin.apple_sdk_15.frameworks;
-                [
-                  AppKit
-                  CoreFoundation
-                  CoreGraphics
-                ]
-              );
+              ++ lib.optionals stdenv.isDarwin [
+                pkgs.apple-sdk_15
+              ];
 
             env = {
               LIBSSH2_SYS_USE_PKG_CONFIG = "1";
