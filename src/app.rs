@@ -107,6 +107,47 @@ impl ContextMenu {
     }
 }
 
+enum ClipboardBackend {
+    System(Clipboard),
+    Unavailable,
+    #[cfg(test)]
+    TestSuccess,
+}
+
+impl ClipboardBackend {
+    fn new() -> Self {
+        match Clipboard::new() {
+            Ok(clipboard) => Self::System(clipboard),
+            Err(_) => Self::Unavailable,
+        }
+    }
+
+    fn set_text(&mut self, text: String) -> Result<(), ClipboardWriteError> {
+        match self {
+            Self::System(clipboard) => clipboard
+                .set_text(text)
+                .map_err(|err| ClipboardWriteError::Failed(err.to_string())),
+            Self::Unavailable => Err(ClipboardWriteError::Unavailable),
+            #[cfg(test)]
+            Self::TestSuccess => Ok(()),
+        }
+    }
+}
+
+enum ClipboardWriteError {
+    Unavailable,
+    Failed(String),
+}
+
+impl ClipboardWriteError {
+    fn status_message(self) -> String {
+        match self {
+            Self::Unavailable => String::from("clipboard unavailable"),
+            Self::Failed(err) => format!("copy failed: {err}"),
+        }
+    }
+}
+
 pub struct App {
     pub startup_root: PathBuf,
     pub tree: Tree,
@@ -118,7 +159,7 @@ pub struct App {
     pub should_quit: bool,
     pub help: HelpState,
     pub context_menu: Option<ContextMenu>,
-    clipboard: Option<Clipboard>,
+    clipboard: ClipboardBackend,
     status_expires_at: Option<Instant>,
     git_refresh_tx: Sender<GitSnapshot>,
     git_refresh_rx: Receiver<GitSnapshot>,
@@ -192,7 +233,7 @@ impl App {
             should_quit: false,
             help: HelpState::new(help_language),
             context_menu: None,
-            clipboard: Clipboard::new().ok(),
+            clipboard: ClipboardBackend::new(),
             status_expires_at: None,
             git_refresh_tx,
             git_refresh_rx,
@@ -474,14 +515,7 @@ impl App {
         match format_relative_path(&self.startup_root, selected) {
             Ok(rel_path) => {
                 let text = format!("{command} {rel_path}");
-                if let Some(clipboard) = self.clipboard.as_mut() {
-                    match clipboard.set_text(text.clone()) {
-                        Ok(()) => self.set_copied_status(&text),
-                        Err(err) => self.set_temporary_status(format!("copy failed: {err}")),
-                    }
-                } else {
-                    self.set_temporary_status("clipboard unavailable");
-                }
+                self.copy_text(text);
             }
             Err(err) => self.set_temporary_status(format!("copy failed: {err}")),
         }
@@ -549,14 +583,7 @@ impl App {
         let selected = self.tree.selected_path();
         match format_relative_with_at(&self.startup_root, selected) {
             Ok(text) => {
-                if let Some(clipboard) = self.clipboard.as_mut() {
-                    match clipboard.set_text(text.clone()) {
-                        Ok(()) => self.set_copied_status(&text),
-                        Err(err) => self.set_temporary_status(format!("copy failed: {err}")),
-                    }
-                } else {
-                    self.set_temporary_status("clipboard unavailable");
-                }
+                self.copy_text(text);
             }
             Err(err) => self.set_temporary_status(format!("copy failed: {err}")),
         }
@@ -566,16 +593,16 @@ impl App {
         let selected = self.tree.selected_path();
         match format_relative_path(&self.startup_root, selected) {
             Ok(text) => {
-                if let Some(clipboard) = self.clipboard.as_mut() {
-                    match clipboard.set_text(text.clone()) {
-                        Ok(()) => self.set_copied_status(&text),
-                        Err(err) => self.set_temporary_status(format!("copy failed: {err}")),
-                    }
-                } else {
-                    self.set_temporary_status("clipboard unavailable");
-                }
+                self.copy_text(text);
             }
             Err(err) => self.set_temporary_status(format!("copy failed: {err}")),
+        }
+    }
+
+    fn copy_text(&mut self, text: String) {
+        match self.clipboard.set_text(text.clone()) {
+            Ok(()) => self.set_copied_status(&text),
+            Err(err) => self.set_temporary_status(err.status_message()),
         }
     }
 
@@ -854,8 +881,8 @@ mod tests {
     use crate::ui;
 
     use super::{
-        format_relative_with_at, resolve_directory_to_open, spawn_copy_hook, App, Command,
-        FS_REFRESH_DEBOUNCE, TREE_WHEEL_SCROLL_AMOUNT,
+        format_relative_with_at, resolve_directory_to_open, spawn_copy_hook, App, ClipboardBackend,
+        Command, FS_REFRESH_DEBOUNCE, TREE_WHEEL_SCROLL_AMOUNT,
     };
 
     #[test]
@@ -939,7 +966,7 @@ mod tests {
         let tmp = tempdir().expect("tmpdir should exist");
         let mut app =
             App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
-        app.clipboard = None;
+        app.clipboard = ClipboardBackend::Unavailable;
         app.after_copy_hook = Some(tmp.path().join("missing-hook"));
 
         app.handle_command(Command::CopyAtRelativePath);
@@ -992,7 +1019,7 @@ mod tests {
 
         let mut app =
             App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
-        app.clipboard = None;
+        app.clipboard = ClipboardBackend::Unavailable;
         select_by_file_name(&mut app, "note.txt");
 
         app.handle_command(Command::ActivateSelected);
@@ -1279,7 +1306,7 @@ mod tests {
         fs::write(tmp.path().join("b.txt"), "b").expect("write should succeed");
         let mut app =
             App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
-        app.clipboard = None;
+        app.clipboard = ClipboardBackend::Unavailable;
         let terminal_area = Rect::new(0, 0, 20, 10);
         let tree_area = ui::tree_area(terminal_area, &app);
 
@@ -1383,6 +1410,7 @@ mod tests {
         fs::write(tmp.path().join("a.txt"), "a").expect("write should succeed");
         let mut app =
             App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
+        app.clipboard = ClipboardBackend::TestSuccess;
         app.after_copy_hook = None;
         let terminal_area = Rect::new(0, 0, 40, 10);
         let tree_area = ui::tree_area(terminal_area, &app);
@@ -1402,7 +1430,7 @@ mod tests {
         fs::write(tmp.path().join("a.txt"), "a").expect("write should succeed");
         let mut app =
             App::new(tmp.path().to_path_buf(), TreeMode::Normal).expect("app should build");
-        app.clipboard = None;
+        app.clipboard = ClipboardBackend::Unavailable;
         let terminal_area = Rect::new(0, 0, 40, 10);
         let tree_area = ui::tree_area(terminal_area, &app);
 
